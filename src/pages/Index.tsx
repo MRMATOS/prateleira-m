@@ -2,10 +2,13 @@
 import React, { useState, useMemo } from 'react';
 import SearchBar from '@/components/SearchBar';
 import AisleList from '@/components/AisleList';
+import HeaderMenu from '@/components/HeaderMenu';
+import AdminControls from '@/components/AdminControls';
 import { AisleProduct } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from '@tanstack/react-query';
+import { AdminProvider } from '@/contexts/AdminContext';
 
 const fetchAisles = async () => {
   const { data, error } = await supabase
@@ -64,29 +67,34 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-3xl px-4 py-6">
-        <header className="mb-8">
-          <h1 className="mb-8 text-3xl font-semibold text-gray-700">Consulta de produtos</h1>
-        </header>
-        
-        <div className="fixed-search-container">
-          <SearchBar 
-            searchQuery={searchQuery} 
-            setSearchQuery={setSearchQuery} 
-            onClear={handleClearSearch}
-          />
-        </div>
-        
-        <div className="mt-4">
-          <AisleList 
-            aisles={filteredAisles} 
-            isLoading={isLoading} 
-            error={error instanceof Error ? error : error ? new Error(String(error)) : null} 
-          />
+    <AdminProvider>
+      <div className="min-h-screen bg-gray-50">
+        <div className="mx-auto max-w-3xl px-4 py-6">
+          <header className="mb-8 flex justify-between items-center">
+            <h1 className="text-3xl font-semibold text-gray-700">Consulta de produtos</h1>
+            <HeaderMenu />
+          </header>
+          
+          <AdminControls />
+          
+          <div className="fixed-search-container">
+            <SearchBar 
+              searchQuery={searchQuery} 
+              setSearchQuery={setSearchQuery} 
+              onClear={handleClearSearch}
+            />
+          </div>
+          
+          <div className="mt-4">
+            <AisleList 
+              aisles={filteredAisles} 
+              isLoading={isLoading} 
+              error={error instanceof Error ? error : error ? new Error(String(error)) : null} 
+            />
+          </div>
         </div>
       </div>
-    </div>
+    </AdminProvider>
   );
 };
 
