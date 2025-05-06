@@ -31,8 +31,12 @@ const Index = () => {
   // Use React Query to fetch and cache the data
   const { data: aisles = [], isLoading, error } = useQuery({
     queryKey: ['aisles'],
-    queryFn: fetchAisles,
-    onError: (error) => {
+    queryFn: fetchAisles
+  });
+  
+  // Handle errors outside of the useQuery options
+  React.useEffect(() => {
+    if (error) {
       console.error('Error fetching aisles:', error);
       toast({
         title: "Erro",
@@ -40,7 +44,7 @@ const Index = () => {
         variant: "destructive",
       });
     }
-  });
+  }, [error, toast]);
 
   const filteredAisles = useMemo(() => {
     if (!searchQuery.trim()) {
