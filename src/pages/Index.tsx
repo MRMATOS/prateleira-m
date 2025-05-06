@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useMemo } from 'react';
 import SearchBar from '@/components/SearchBar';
 import AisleList from '@/components/AisleList';
 import { AisleProduct } from '@/types';
@@ -32,13 +32,15 @@ const Index = () => {
   const { data: aisles = [], isLoading, error } = useQuery({
     queryKey: ['aisles'],
     queryFn: fetchAisles,
-    onError: (err) => {
-      console.error('Error fetching aisles:', err);
-      toast({
-        title: "Erro",
-        description: "Não foi possível carregar os dados dos corredores.",
-        variant: "destructive",
-      });
+    onSettled: (_, error) => {
+      if (error) {
+        console.error('Error fetching aisles:', error);
+        toast({
+          title: "Erro",
+          description: "Não foi possível carregar os dados dos corredores.",
+          variant: "destructive",
+        });
+      }
     }
   });
 
