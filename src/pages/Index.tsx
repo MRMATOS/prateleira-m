@@ -3,40 +3,44 @@ import React, { useState, useEffect, useMemo } from 'react';
 import SearchBar from '@/components/SearchBar';
 import AisleList from '@/components/AisleList';
 import { AisleProduct } from '@/types';
-import { mockAisles } from '@/data/mockAisles';
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { useQuery } from '@tanstack/react-query';
+
+const fetchAisles = async () => {
+  const { data, error } = await supabase
+    .from('produto')
+    .select('corredor, produto')
+    .order('corredor', { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  // Transform the data to match the AisleProduct type
+  return data.map(item => ({
+    corredor: item.corredor,
+    produtos: item.produto || '' // Handle potentially null produto values
+  }));
+};
 
 const Index = () => {
   const [searchQuery, setSearchQuery] = useState('');
-  const [aisles, setAisles] = useState<AisleProduct[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<Error | null>(null);
   const { toast } = useToast();
 
-  useEffect(() => {
-    // Simulating a data fetch
-    const fetchData = async () => {
-      try {
-        setIsLoading(true);
-        // This would be replaced with actual Supabase call
-        await new Promise(resolve => setTimeout(resolve, 500)); // Simulated delay
-        setAisles(mockAisles);
-        setError(null);
-      } catch (err) {
-        console.error('Error fetching aisles:', err);
-        setError(err instanceof Error ? err : new Error('Erro ao buscar dados'));
-        toast({
-          title: "Erro",
-          description: "Não foi possível carregar os dados dos corredores.",
-          variant: "destructive",
-        });
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchData();
-  }, [toast]);
+  // Use React Query to fetch and cache the data
+  const { data: aisles = [], isLoading, error } = useQuery({
+    queryKey: ['aisles'],
+    queryFn: fetchAisles,
+    onError: (err) => {
+      console.error('Error fetching aisles:', err);
+      toast({
+        title: "Erro",
+        description: "Não foi possível carregar os dados dos corredores.",
+        variant: "destructive",
+      });
+    }
+  });
 
   const filteredAisles = useMemo(() => {
     if (!searchQuery.trim()) {
@@ -62,17 +66,21 @@ const Index = () => {
           <h1 className="mb-8 text-3xl font-semibold text-gray-700">Consulta de produtos</h1>
         </header>
         
-        <SearchBar 
-          searchQuery={searchQuery} 
-          setSearchQuery={setSearchQuery} 
-          onClear={handleClearSearch}
-        />
+        <div className="fixed-search-container">
+          <SearchBar 
+            searchQuery={searchQuery} 
+            setSearchQuery={setSearchQuery} 
+            onClear={handleClearSearch}
+          />
+        </div>
         
-        <AisleList 
-          aisles={filteredAisles} 
-          isLoading={isLoading} 
-          error={error} 
-        />
+        <div className="mt-4">
+          <AisleList 
+            aisles={filteredAisles} 
+            isLoading={isLoading} 
+            error={error instanceof Error ? error : error ? new Error(String(error)) : null} 
+          />
+        </div>
       </div>
     </div>
   );

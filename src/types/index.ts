@@ -15,3 +15,9 @@ export interface AisleListProps {
   isLoading: boolean;
   error: Error | null;
 }
+
+// Updated interface to match Supabase's produto table structure
+export interface ProdutoRow {
+  corredor: number;
+  produto: string | null;
+}

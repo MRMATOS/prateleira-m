@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { AisleListProps } from '@/types';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 
 const AisleList = ({ aisles, isLoading, error }: AisleListProps) => {
   if (isLoading) {
@@ -29,16 +30,22 @@ const AisleList = ({ aisles, isLoading, error }: AisleListProps) => {
 
   return (
     <div className="mt-4 rounded-md border border-gray-200 bg-white p-2">
-      <ul className="divide-y divide-gray-100">
-        {aisles.map((aisle) => (
-          <li key={aisle.corredor} className="py-4 px-2 text-gray-700">
-            <p className="text-lg">
-              <span className="font-medium">{aisle.corredor}: </span>
-              {aisle.produtos}
-            </p>
-          </li>
-        ))}
-      </ul>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="w-24">Corredor</TableHead>
+            <TableHead>Produtos</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {aisles.map((aisle) => (
+            <TableRow key={aisle.corredor}>
+              <TableCell className="font-medium">{aisle.corredor}</TableCell>
+              <TableCell>{aisle.produtos}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 };
