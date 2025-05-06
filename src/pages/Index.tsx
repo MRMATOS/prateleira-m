@@ -32,15 +32,13 @@ const Index = () => {
   const { data: aisles = [], isLoading, error } = useQuery({
     queryKey: ['aisles'],
     queryFn: fetchAisles,
-    onSettled: (_, error) => {
-      if (error) {
-        console.error('Error fetching aisles:', error);
-        toast({
-          title: "Erro",
-          description: "Não foi possível carregar os dados dos corredores.",
-          variant: "destructive",
-        });
-      }
+    onError: (error) => {
+      console.error('Error fetching aisles:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível carregar os dados dos corredores.",
+        variant: "destructive",
+      });
     }
   });
 
