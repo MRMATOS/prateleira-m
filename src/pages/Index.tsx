@@ -1,19 +1,28 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import SearchBar from '@/components/SearchBar';
 import AisleList from '@/components/AisleList';
 import HeaderMenu from '@/components/HeaderMenu';
 import AdminControls from '@/components/AdminControls';
+import StoreSelect from '@/components/StoreSelect';
 import { AisleProduct } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { useQuery } from '@tanstack/react-query';
 import { AdminProvider } from '@/contexts/AdminContext';
 
-const fetchAisles = async () => {
+// Define initial store list - this can be expanded as needed
+const INITIAL_STORES = [
+  'Dal Pozzo Vila Bela',
+  'Dal Pozzo Cidade dos Lagos',
+  'Dal Pozzo Home Center'
+];
+
+const fetchAisles = async (selectedStore: string) => {
   const { data, error } = await supabase
     .from('produto')
-    .select('corredor, produto')
+    .select('corredor, produto, loja')
+    .eq('loja', selectedStore)
     .order('corredor', { ascending: true });
 
   if (error) {
@@ -23,18 +32,20 @@ const fetchAisles = async () => {
   // Transform the data to match the AisleProduct type
   return data.map(item => ({
     corredor: item.corredor,
-    produtos: item.produto || '' // Handle potentially null produto values
+    produtos: item.produto || '', // Handle potentially null produto values
+    loja: item.loja
   }));
 };
 
 const Index = () => {
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedStore, setSelectedStore] = useState(INITIAL_STORES[0]);
   const { toast } = useToast();
 
   // Use React Query to fetch and cache the data
-  const { data: aisles = [], isLoading, error } = useQuery({
-    queryKey: ['aisles'],
-    queryFn: fetchAisles
+  const { data: aisles = [], isLoading, error, refetch } = useQuery({
+    queryKey: ['aisles', selectedStore],
+    queryFn: () => fetchAisles(selectedStore)
   });
   
   // Handle errors outside of the useQuery options
@@ -75,7 +86,15 @@ const Index = () => {
             <HeaderMenu />
           </header>
           
-          <AdminControls />
+          <div className="mb-6">
+            <StoreSelect 
+              selectedStore={selectedStore} 
+              setSelectedStore={setSelectedStore} 
+              stores={INITIAL_STORES} 
+            />
+          </div>
+          
+          <AdminControls selectedStore={selectedStore} />
           
           <div className="fixed-search-container">
             <SearchBar 

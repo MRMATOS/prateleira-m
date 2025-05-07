@@ -28,7 +28,7 @@ const AisleList = ({ aisles, isLoading, error }: AisleListProps) => {
   const [editingAisle, setEditingAisle] = useState<number | null>(null);
   const [editedProdutos, setEditedProdutos] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [aisleToDelete, setAisleToDelete] = useState<number | null>(null);
+  const [aisleToDelete, setAisleToDelete] = useState<AisleProduct | null>(null);
 
   if (isLoading) {
     return (
@@ -67,11 +67,16 @@ const AisleList = ({ aisles, isLoading, error }: AisleListProps) => {
   const handleSaveEdit = async () => {
     if (!editingAisle) return;
 
+    // Find the current aisle being edited to get its store
+    const currentAisle = aisles.find(aisle => aisle.corredor === editingAisle);
+    if (!currentAisle || !currentAisle.loja) return;
+
     try {
       const { error } = await supabase
         .from('produto')
         .update({ produto: editedProdutos })
-        .eq('corredor', editingAisle);
+        .eq('corredor', editingAisle)
+        .eq('loja', currentAisle.loja);
 
       if (error) throw error;
 
@@ -81,7 +86,7 @@ const AisleList = ({ aisles, isLoading, error }: AisleListProps) => {
         variant: "default",
       });
 
-      queryClient.invalidateQueries({ queryKey: ['aisles'] });
+      queryClient.invalidateQueries({ queryKey: ['aisles', currentAisle.loja] });
       setEditingAisle(null);
     } catch (error) {
       console.error('Error updating shelf:', error);
@@ -93,19 +98,20 @@ const AisleList = ({ aisles, isLoading, error }: AisleListProps) => {
     }
   };
 
-  const openDeleteDialog = (corredor: number) => {
-    setAisleToDelete(corredor);
+  const openDeleteDialog = (aisle: AisleProduct) => {
+    setAisleToDelete(aisle);
     setDeleteDialogOpen(true);
   };
 
   const handleDeleteAisle = async () => {
-    if (!aisleToDelete) return;
+    if (!aisleToDelete || !aisleToDelete.loja) return;
 
     try {
       const { error } = await supabase
         .from('produto')
         .delete()
-        .eq('corredor', aisleToDelete);
+        .eq('corredor', aisleToDelete.corredor)
+        .eq('loja', aisleToDelete.loja);
 
       if (error) throw error;
 
@@ -115,7 +121,7 @@ const AisleList = ({ aisles, isLoading, error }: AisleListProps) => {
         variant: "default",
       });
 
-      queryClient.invalidateQueries({ queryKey: ['aisles'] });
+      queryClient.invalidateQueries({ queryKey: ['aisles', aisleToDelete.loja] });
     } catch (error) {
       console.error('Error deleting shelf:', error);
       toast({
@@ -142,7 +148,7 @@ const AisleList = ({ aisles, isLoading, error }: AisleListProps) => {
           </TableHeader>
           <TableBody>
             {aisles.map((aisle) => (
-              <TableRow key={aisle.corredor}>
+              <TableRow key={`${aisle.corredor}-${aisle.loja}`}>
                 <TableCell className="font-medium">{aisle.corredor}</TableCell>
                 
                 {editingAisle === aisle.corredor ? (
@@ -191,7 +197,7 @@ const AisleList = ({ aisles, isLoading, error }: AisleListProps) => {
                         <Button 
                           size="sm" 
                           variant="ghost" 
-                          onClick={() => openDeleteDialog(aisle.corredor)}
+                          onClick={() => openDeleteDialog(aisle)}
                           className="h-8 w-8 p-0 text-red-500"
                         >
                           <Trash2 className="h-4 w-4" />

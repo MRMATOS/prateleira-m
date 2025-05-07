@@ -8,7 +8,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from '@tanstack/react-query';
 
-const AdminControls: React.FC = () => {
+interface AdminControlsProps {
+  selectedStore: string;
+}
+
+const AdminControls: React.FC<AdminControlsProps> = ({ selectedStore }) => {
   const { isAdminMode, exitAdminMode } = useAdmin();
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const { toast } = useToast();
@@ -17,7 +21,7 @@ const AdminControls: React.FC = () => {
   if (!isAdminMode) return null;
 
   const refreshData = () => {
-    queryClient.invalidateQueries({ queryKey: ['aisles'] });
+    queryClient.invalidateQueries({ queryKey: ['aisles', selectedStore] });
     toast({
       title: "Alterações salvas",
       description: "Lista de corredores atualizada.",
@@ -53,6 +57,7 @@ const AdminControls: React.FC = () => {
         open={isAddModalOpen} 
         onOpenChange={setIsAddModalOpen} 
         onSuccess={refreshData}
+        selectedStore={selectedStore}
       />
     </div>
   );

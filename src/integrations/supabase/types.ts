@@ -152,14 +152,17 @@ export type Database = {
       produto: {
         Row: {
           corredor: number
+          loja: string
           produto: string | null
         }
         Insert: {
           corredor: number
+          loja?: string
           produto?: string | null
         }
         Update: {
           corredor?: number
+          loja?: string
           produto?: string | null
         }
         Relationships: []

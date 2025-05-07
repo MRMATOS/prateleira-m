@@ -2,6 +2,7 @@
 export interface AisleProduct {
   corredor: number;
   produtos: string;
+  loja?: string;
 }
 
 export interface SearchBarProps {
@@ -20,4 +21,11 @@ export interface AisleListProps {
 export interface ProdutoRow {
   corredor: number;
   produto: string | null;
+  loja: string;
+}
+
+export interface StoreSelectProps {
+  selectedStore: string;
+  setSelectedStore: (store: string) => void;
+  stores: string[];
 }
