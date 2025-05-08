@@ -87,6 +87,27 @@ export type Database = {
         }
         Relationships: []
       }
+      list: {
+        Row: {
+          id: string
+          item: string
+          origem: string | null
+          quantidade: number | null
+        }
+        Insert: {
+          id?: string
+          item: string
+          origem?: string | null
+          quantidade?: number | null
+        }
+        Update: {
+          id?: string
+          item?: string
+          origem?: string | null
+          quantidade?: number | null
+        }
+        Relationships: []
+      }
       product_losses: {
         Row: {
           category_id: string
