@@ -1,10 +1,10 @@
-
 import React, { useState, useMemo, useEffect } from 'react';
 import SearchBar from '@/components/SearchBar';
 import AisleList from '@/components/AisleList';
 import HeaderMenu from '@/components/HeaderMenu';
 import AdminControls from '@/components/AdminControls';
 import StoreSelect from '@/components/StoreSelect';
+import ShoppingListButton from '@/components/ShoppingListButton';
 import { AisleProduct } from '@/types';
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -86,12 +86,13 @@ const Index = () => {
             <HeaderMenu />
           </header>
           
-          <div className="mb-6">
+          <div className="mb-6 flex flex-wrap gap-4 items-center justify-between">
             <StoreSelect 
               selectedStore={selectedStore} 
               setSelectedStore={setSelectedStore} 
               stores={INITIAL_STORES} 
             />
+            <ShoppingListButton />
           </div>
           
           <AdminControls selectedStore={selectedStore} />
