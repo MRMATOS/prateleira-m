@@ -29,7 +29,8 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     }
   };
 
-  const normalizeText = (text: string) => {
+  const normalizeText = (text: string): string => {
+    if (!text || typeof text !== 'string') return '';
     return text
       .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
@@ -37,7 +38,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
       .trim();
   };
 
-  const extractTextFromImage = async (imageFile: File) => {
+  const extractTextFromImage = async (imageFile: File): Promise<string> => {
     try {
       console.log('[OCR] Iniciando processamento...');
       const result = await (window as any).Tesseract.recognize(
@@ -57,28 +58,31 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     }
   };
 
-  const processReceiptText = (text: string) => {
+  const processReceiptText = (text: string): string[] => {
+    if (!text || typeof text !== 'string') return [];
+    
     return text.split('\n')
       .filter(line => {
+        if (!line || typeof line !== 'string') return false;
         const isProductLine = line.match(/[A-ZÇÃÕÊÉÁÍÓÚÂÔÀ]{3,}/);
         const isHeader = line.match(/CNPJ|IE|RUA|TOTAL|PROTOCOLO|CONSUMIDOR|Qtd|Valor/i);
         return isProductLine && !isHeader;
       })
       .flatMap(line => {
         const cleanLine = line
-          .replace(/\d{13}/g, '')
-          .replace(/\d+\sUN/gi, '')
-          .replace(/\d+[\.,]\d{2}/g, '')
-          .replace(/^\d+\s+/g, '')
-          .trim();
+          ?.replace(/\d{13}/g, '')
+          ?.replace(/\d+\sUN/gi, '')
+          ?.replace(/\d+[\.,]\d{2}/g, '')
+          ?.replace(/^\d+\s+/g, '')
+          ?.trim() || '';
           
-        return cleanLine ? cleanLine.split(/[\s\/-]+/) : [];
+        return cleanLine ? cleanLine.split(/[\s\/-]+/).filter(Boolean) : [];
       })
       .map(word => normalizeText(word))
-      .filter(word => typeof word === 'string' && word.length > 2); // Correção-chave
+      .filter(word => typeof word === 'string' && word.length > 2);
   };
 
-  const findProductMatches = async (receiptWords: string[]) => {
+  const findProductMatches = async (receiptWords: string[]): Promise<Product[]> => {
     try {
       console.log('[Supabase] Buscando produtos...');
       const { data: products, error } = await supabase
@@ -86,15 +90,17 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
         .select('corredor, produto, loja');
 
       if (error) throw error;
-      if (!products || products.length === 0) throw new Error('Nenhum produto cadastrado');
+      if (!products || !Array.isArray(products)) throw new Error('Nenhum produto cadastrado');
 
       const productWordsMap = new Map<string, Product>();
       products.forEach(product => {
+        if (!product.produto || typeof product.produto !== 'string') return;
+        
         product.produto.split(/[,;]/).forEach(prod => {
           const normalized = normalizeText(prod);
           if (normalized) {
             normalized.split(/[\s\/-]+/).forEach(word => {
-              if (typeof word === 'string' && word.length > 2) { // Verificação crítica
+              if (typeof word === 'string' && word.length > 2) {
                 productWordsMap.set(word, product);
               }
             });
@@ -150,13 +156,13 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
         onProcessed(matches);
         toast({
           title: "Produtos encontrados!",
-          description: `${matches.length} itens identificados: ${matches.map(p => p.produto).join(', ')}`,
+          description: `${matches.length} itens identificados: ${matches.slice(0, 3).map(p => p.produto).join(', ')}${matches.length > 3 ? '...' : ''}`,
           variant: "default",
         });
       } else {
         toast({
           title: "Nenhum produto reconhecido",
-          description: "Adicione os produtos ao sistema ou verifique o cadastro",
+          description: "Verifique se os produtos estão cadastrados corretamente",
           variant: "destructive",
         });
       }
@@ -228,11 +234,11 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
         </div>
 
         <div className="text-xs text-gray-500 space-y-2">
-          <p><strong>Instruções de cadastro:</strong></p>
+          <p><strong>Dicas para melhor reconhecimento:</strong></p>
           <ul className="list-disc pl-5 space-y-1">
-            <li>Cadastre palavras-chave únicas (ex: "CAFE" em vez de "CAFÉ MELITTA")</li>
-            <li>Use apenas letras maiúsculas no cadastro</li>
-            <li>Para produtos compostos, cadastre cada elemento separadamente</li>
+            <li>Cadastre produtos no singular e em maiúsculas (ex: "CAFE")</li>
+            <li>Fotografe apenas a seção de itens do cupom</li>
+            <li>Garanta que a imagem está nítida e bem iluminada</li>
           </ul>
         </div>
       </div>
