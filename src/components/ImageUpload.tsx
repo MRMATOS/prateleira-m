@@ -4,8 +4,14 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
 
+interface Product {
+  produto: string;
+  corredor: string;
+  loja?: string;
+}
+
 interface ImageUploadProps {
-  onProcessed: (items: {name: string, aisle: string}[]) => void;
+  onProcessed: (items: Product[]) => void;
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
 }
@@ -22,77 +28,77 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
 
   const extractTextFromImage = async (imageFile: File) => {
     try {
-      console.log('Iniciando OCR...');
+      console.log('[OCR] Iniciando processamento de imagem...');
       const result = await (window as any).Tesseract.recognize(
         imageFile,
         'por',
         {
-          logger: m => console.log('Progresso OCR:', m),
+          logger: m => console.log('[OCR] Progresso:', m),
           tessedit_pageseg_mode: 6,
         }
       );
-      console.log('OCR concluído com sucesso');
+      console.log('[OCR] Texto extraído com sucesso');
       return result.data.text;
     } catch (error) {
-      console.error("Erro no OCR:", error);
+      console.error("[OCR] Erro:", error);
       throw new Error('Falha ao ler texto da imagem');
     }
   };
 
   const findExactMatches = async (text: string) => {
     try {
-      console.log('Buscando produtos no Supabase...');
+      console.log('[Supabase] Buscando produtos...');
       const { data: products, error } = await supabase
-        .from('produtos')
-        .select('nome, corredor');
-      
+        .from('produto')  // Tabela corrigida
+        .select('produto, corredor, loja');  // Colunas corrigidas
+
       if (error) {
-        console.error('Erro Supabase:', error);
-        throw error;
+        console.error('[Supabase] Erro na consulta:', error);
+        throw new Error(`Erro no banco de dados: ${error.message}`);
       }
 
       if (!products || products.length === 0) {
         throw new Error('Nenhum produto cadastrado encontrado');
       }
 
-      console.log(`${products.length} produtos carregados do Supabase`);
+      console.log(`[Supabase] ${products.length} produtos carregados`);
 
       const normalize = (str: string) => 
         str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 
-      const productMap = new Map<string, string>();
+      const productMap = new Map<string, Product>();
       products.forEach(p => {
-        if (p.nome) {
-          productMap.set(normalize(p.nome), p.corredor || 'Corredor não especificado');
+        if (p.produto) {  // Campo corrigido
+          productMap.set(normalize(p.produto), {
+            produto: p.produto,
+            corredor: p.corredor || 'Corredor não especificado',
+            loja: p.loja
+          });
         }
       });
 
       const words = text.split(/\s+/)
-        .map(word => word.replace(/[^a-zA-ZÀ-ú]/g, '')) // Remove símbolos e números
-        .filter(word => word.length >= 3) // Palavras com 3+ letras
+        .map(word => word.replace(/[^a-zA-ZÀ-ú]/g, ''))
+        .filter(word => word.length >= 3)
         .map(normalize);
 
-      console.log('Palavras extraídas:', words);
+      console.log('[Processamento] Palavras extraídas:', words);
 
-      const matches: {name: string, aisle: string}[] = [];
+      const matches: Product[] = [];
       const addedProducts = new Set<string>();
 
       words.forEach(word => {
         if (productMap.has(word) && !addedProducts.has(word)) {
-          const originalName = products.find(p => normalize(p.nome) === word)?.nome || word;
-          matches.push({
-            name: originalName,
-            aisle: productMap.get(word)!
-          });
+          matches.push(productMap.get(word)!);
           addedProducts.add(word);
         }
       });
 
-      console.log(`${matches.length} correspondências encontradas`);
+      console.log('[Processamento] Correspondências encontradas:', matches.length);
       return matches;
 
     } catch (error) {
-      console.error('Erro na busca de produtos:', error);
+      console.error('[Processamento] Erro:', error);
       throw error;
     }
   };
@@ -110,36 +116,33 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     setIsLoading(true);
     
     try {
-      // 1. Extração de texto
       const extractedText = await extractTextFromImage(file);
       if (!extractedText) {
-        throw new Error('Nenhum texto foi extraído da imagem');
+        throw new Error('Nenhum texto reconhecido na imagem');
       }
 
-      // 2. Busca de correspondências
       const matchedProducts = await findExactMatches(extractedText);
       
-      // 3. Resultados
       if (matchedProducts.length > 0) {
         onProcessed(matchedProducts);
         toast({
           title: "Sucesso",
-          description: `Encontramos ${matchedProducts.length} produto(s) no cupom`,
+          description: `Encontrados ${matchedProducts.length} produtos no cupom`,
           variant: "default",
         });
       } else {
         toast({
           title: "Aviso",
-          description: "Nenhum produto cadastrado foi encontrado no cupom",
+          description: "Nenhum produto cadastrado encontrado no cupom",
           variant: "destructive",
         });
       }
 
     } catch (error: any) {
-      console.error('Erro no processamento:', error);
+      console.error('[Erro Geral]', error);
       toast({
         title: "Erro",
-        description: error.message || "Falha ao processar o cupom fiscal",
+        description: error.message || "Erro desconhecido ao processar o cupom",
         variant: "destructive",
       });
     } finally {
@@ -151,7 +154,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     <div className="flex flex-col gap-4 border rounded-md p-4">
       <h3 className="text-lg font-medium">Ler cupom fiscal</h3>
       <p className="text-sm text-gray-500">
-        Fotografe a seção de itens do cupom fiscal para identificar produtos
+        Fotografe a seção de itens do cupom contendo produtos
       </p>
       
       <div className="flex items-center gap-4">
@@ -187,11 +190,11 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
       </div>
 
       <div className="text-xs text-gray-500">
-        <p><strong>Verifique antes de enviar:</strong></p>
+        <p><strong>Dicas para melhor resultado:</strong></p>
         <ul className="list-disc pl-5 space-y-1">
-          <li>A imagem está nítida e legível</li>
-          <li>Os produtos estão cadastrados no sistema</li>
-          <li>Você está fotografando apenas a área de itens</li>
+          <li>Verifique se os produtos estão cadastrados na tabela "produto"</li>
+          <li>Confira as colunas: produto, corredor e loja</li>
+          <li>Garanta a conexão com o Supabase no arquivo de configuração</li>
         </ul>
       </div>
     </div>
