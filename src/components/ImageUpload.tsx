@@ -15,6 +15,24 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
+  // Configurações do Tesseract para diferentes tipos de imagem
+  const tesseractConfig = {
+    receipt: {
+      lang: 'por',
+      options: {
+        tessedit_pageseg_mode: 6, // Modo para documentos estruturados
+        tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÇÃÕÊÉÁÍÓÚÂÔÀáéíóúâêôãõç.-/ ',
+      }
+    },
+    list: {
+      lang: 'por',
+      options: {
+        tessedit_pageseg_mode: 3, // Modo para texto automático
+        preserve_interword_spaces: 0
+      }
+    }
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       const selectedFile = e.target.files[0];
@@ -23,32 +41,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     }
   };
 
-  // Função para normalizar texto (remove acentos, caracteres especiais)
-  const normalizeText = (text: string) => {
-    return text
-      .toLowerCase()
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9\s]/g, '');
-  };
-
-  const calculateSimilarity = (str1: string, str2: string) => {
-    const longer = str1.length > str2.length ? str1 : str2;
-    const shorter = str1.length <= str2.length ? str1 : str2;
-    
-    if (longer.length === 0) return 1.0;
-    
-    const lengthDiff = longer.length - shorter.length;
-    if (lengthDiff > longer.length * 0.3) return 0;
-    
-    let matches = 0;
-    for (let i = 0; i < shorter.length; i++) {
-      if (longer.includes(shorter[i])) matches++;
-    }
-    
-    return matches / longer.length;
-  };
-
-  // PRÉ-PROCESSAMENTO DE IMAGEM (NOVO)
+  // Pré-processamento básico de imagem
   const preprocessImage = async (file: File): Promise<Blob> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -59,38 +52,17 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
           const canvas = document.createElement('canvas');
           const ctx = canvas.getContext('2d')!;
           
-          // Ajustar tamanho mantendo proporção
-          const MAX_SIZE = 2000;
-          let width = img.width;
-          let height = img.height;
+          // Mantém proporção original
+          canvas.width = img.width;
+          canvas.height = img.height;
           
-          if (width > height) {
-            if (width > MAX_SIZE) {
-              height *= MAX_SIZE / width;
-              width = MAX_SIZE;
-            }
-          } else {
-            if (height > MAX_SIZE) {
-              width *= MAX_SIZE / height;
-              height = MAX_SIZE;
-            }
-          }
+          // Aplica filtros básicos
+          ctx.filter = 'contrast(1.1) brightness(1.1)';
+          ctx.drawImage(img, 0, 0);
           
-          canvas.width = width;
-          canvas.height = height;
-          
-          // Aplicar filtros para melhorar OCR (especialmente para cupons)
-          ctx.filter = 'contrast(1.2) brightness(1.1) grayscale(100%)';
-          ctx.drawImage(img, 0, 0, width, height);
-          
-          // Converter para Blob
           canvas.toBlob((blob) => {
-            if (blob) {
-              resolve(blob);
-            } else {
-              resolve(new Blob([], { type: 'image/jpeg' }));
-            }
-          }, 'image/jpeg', 0.8);
+            resolve(blob || new Blob([], { type: 'image/jpeg' }));
+          }, 'image/jpeg', 0.9);
         };
         img.src = e.target!.result as string;
       };
@@ -98,87 +70,64 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     });
   };
 
-  // OCR APRIMORADO (NOVO)
-  const extractTextFromImage = async (imageFile: File) => {
-    try {
-      // Pré-processa a imagem antes do OCR
-      const processedImage = await preprocessImage(imageFile);
-      
-      // Configurações otimizadas para cupons fiscais
-      const result = await (window as any).Tesseract.recognize(
-        processedImage,
-        'por+eng', // Usa português e inglês como fallback
-        {
-          logger: (m: any) => console.log('OCR Progress:', m),
-          tessedit_pageseg_mode: 6, // Modo de segmentação para blocos únicos (ótimo para cupons)
-          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÇÃÕÊÉÁÍÓÚÂÔÀáéíóúâêôãõç.-/ ', // Caracteres esperados
-          preserve_interword_spaces: 1 // Mantém espaçamento para melhorar reconhecimento de colunas
-        }
-      );
-      
-      return result.data.text;
-    } catch (error) {
-      console.error("Error in OCR:", error);
-      return null;
-    }
+  // Detecta se é um cupom fiscal ou lista comum
+  const detectImageType = async (imageBlob: Blob): Promise<'receipt' | 'list'> => {
+    // Implementação simplificada - pode ser aprimorada
+    return 'receipt'; // Assume que é cupom por padrão
   };
 
-  // BUSCA DE PRODUTOS APRIMORADA (NOVO)
-  const findProductsInText = (extractedText: string, registeredProducts: string[]) => {
-    const lines = extractedText.split('\n')
-      .filter(line => line.trim().length > 3) // Remove linhas muito curtas
-      .map(line => line.replace(/\s{2,}/g, ' ').trim()); // Normaliza espaços
+  // Extrai texto com configurações apropriadas
+  const extractText = async (imageFile: File) => {
+    const processedImage = await preprocessImage(imageFile);
+    const imageType = await detectImageType(processedImage);
+    const config = tesseractConfig[imageType];
 
-    const results: Array<{
-      product: string;
-      originalText: string;
-      confidence: number;
-    }> = [];
+    const result = await (window as any).Tesseract.recognize(
+      processedImage,
+      config.lang,
+      {
+        logger: (m: any) => console.log('OCR Progress:', m),
+        ...config.options
+      }
+    );
     
-    // Primeiro busca por correspondências exatas
-    registeredProducts.forEach(product => {
-      const normalizedProduct = normalizeText(product);
-      
-      lines.forEach(line => {
-        const normalizedLine = normalizeText(line);
-        
-        // Verifica se o produto aparece na linha (match exato)
-        if (normalizedLine.includes(normalizedProduct)) {
-          results.push({
-            product,
-            originalText: line,
-            confidence: 1
-          });
-        }
-      });
+    return {
+      text: result.data.text,
+      type: imageType
+    };
+  };
+
+  // Processamento específico para cupons fiscais
+  const processReceipt = (text: string) => {
+    const lines = text.split('\n')
+      .filter(line => line.trim().length > 5) // Ignora linhas muito curtas
+      .map(line => line.trim());
+
+    // Padrão comum em cupons: código | descrição | quantidade | valor
+    const productLines = lines.filter(line => {
+      return line.match(/\d{10,14}\s+.+\s+\d+\s+[A-Z]+\s+\d+,\d{2}/) || // Código de barras
+             line.match(/^\d+\s+.+\s+\d+,\d{2}$/); // Formato simples
     });
 
-    // Se não encontrou matches exatos, usa similaridade
-    if (results.length === 0) {
-      registeredProducts.forEach(product => {
-        const normalizedProduct = normalizeText(product);
-        
-        lines.forEach(line => {
-          const normalizedLine = normalizeText(line);
-          const similarity = calculateSimilarity(normalizedLine, normalizedProduct);
-          
-          if (similarity > 0.7) {
-            results.push({
-              product,
-              originalText: line,
-              confidence: similarity
-            });
-          }
-        });
-      });
-    }
+    // Extrai apenas a descrição do produto
+    return productLines.map(line => {
+      // Remove código, valores e quantidades
+      return line
+        .replace(/^\d+\s+/, '') // Remove número do item
+        .replace(/\d{10,14}\s+/, '') // Remove código de barras
+        .replace(/\s+\d+([.,]\d+)?$/, '') // Remove valores no final
+        .replace(/\s+\d+\s+[A-Z]+\s+\d+,\d{2}$/, '') // Remove qtd + valor
+        .trim();
+    });
+  };
 
-    // Remove duplicados e ordena por confiança
-    const uniqueResults = results.filter((result, index, self) =>
-      index === self.findIndex((t) => t.product === result.product)
-    ).sort((a, b) => b.confidence - a.confidence);
-
-    return uniqueResults;
+  // Processamento para listas comuns
+  const processList = (text: string) => {
+    return text.split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 2) // Ignora linhas muito curtas
+      .filter(line => !line.match(/^\d+$/) // Ignora números sozinhos
+      .filter(line => !line.match(/[R$]\s?\d+/)); // Ignora valores
   };
 
   const handleUpload = async () => {
@@ -194,75 +143,42 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     setIsLoading(true);
     
     try {
-      // Processa a imagem usando Tesseract.js com pré-processamento
-      const extractedText = await extractTextFromImage(file);
+      const { text, type } = await extractText(file);
+      console.log(`Texto extraído (${type}):`, text);
+
+      let items: string[] = [];
       
-      if (extractedText) {
-        console.log("Texto extraído:", extractedText);
-        
-        // Obtém lista de produtos do Supabase
-        const { data: productData, error } = await supabase
-          .from('produto')
-          .select('produto');
-        
-        if (error) throw error;
-        
-        // Extrai nomes dos produtos
-        const registeredProducts = productData
-          .filter(item => item.produto)
-          .map(item => item.produto || '');
-        
-        // Processa o texto extraído (versão aprimorada)
-        const matchedProducts = findProductsInText(extractedText, registeredProducts);
-        
-        let finalItems: string[] = [];
-        
-        if (matchedProducts.length > 0) {
-          finalItems = matchedProducts.map(match => match.product);
-          
-          toast({
-            title: "Sucesso",
-            description: `${finalItems.length} itens identificados`,
-            variant: "default",
-          });
-        } else {
-          // Fallback para extração simples (se nenhum match for encontrado)
-          const text = extractedText.toLowerCase();
-          const words = text.split(/[\s,\n]+/);
-          
-          // Filtra termos irrelevantes (específico para cupons)
-          const termsToFilter = [
-            'total', 'cash', 'cnpj', 'receipt', 'valor', 'troco', 'cpf', 
-            'data', 'hora', 'caixa', 'operador', 'pagamento', 'item', 
-            'subtotal', 'desconto', 'venda', 'cupom', 'fiscal', 'documento',
-            'auxiliar', 'nota', 'consumidor', 'eletronica', 'ie', 'protocolo'
-          ];
-          
-          finalItems = words
-            .filter(word => {
-              if (/^\d+([.,]\d+)?$/.test(word)) return false;
-              return !termsToFilter.includes(word);
-            })
-            .filter((word, index, self) => self.indexOf(word) === index); // Remove duplicados
-          
-          toast({
-            title: "Processamento básico",
-            description: `${finalItems.length} itens extraídos (sem correspondência exata)`,
-            variant: "default",
-          });
+      if (type === 'receipt') {
+        items = processReceipt(text);
+        if (items.length === 0) {
+          // Fallback para processamento genérico se não encontrar padrão de cupom
+          items = processList(text);
         }
-        
-        // Envia itens extraídos para o componente pai
-        onProcessed(finalItems);
-        
       } else {
-        throw new Error('Nenhum texto extraído da imagem');
+        items = processList(text);
       }
+
+      // Filtra itens vazios e duplicados
+      const filteredItems = items
+        .filter(item => item.length > 0)
+        .filter((item, index, self) => self.indexOf(item) === index);
+
+      if (filteredItems.length > 0) {
+        onProcessed(filteredItems);
+        toast({
+          title: "Sucesso",
+          description: `${filteredItems.length} itens identificados`,
+          variant: "default",
+        });
+      } else {
+        throw new Error('Nenhum item reconhecido');
+      }
+
     } catch (error) {
       console.error('Error processing image:', error);
       toast({
         title: "Erro",
-        description: "Falha ao processar a imagem. Tente novamente com uma foto mais nítida.",
+        description: "Não foi possível identificar itens na imagem. Tente novamente com uma foto mais nítida.",
         variant: "destructive",
       });
     } finally {
@@ -278,11 +194,10 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     <div className="flex flex-col gap-4 border rounded-md p-4">
       <h3 className="text-lg font-medium">Carregar imagem</h3>
       <p className="text-sm text-gray-500">
-        Carregue uma foto de um cupom fiscal ou lista de compras manuscrita
+        Carregue uma foto de um cupom fiscal ou lista de compras
       </p>
       
       <div className="flex flex-col gap-4">
-        {/* Pré-visualização da imagem (NOVO) */}
         {previewUrl && (
           <div className="border rounded-md p-2 max-w-xs mx-auto">
             <img 
@@ -290,9 +205,6 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
               alt="Pré-visualização" 
               className="max-h-40 mx-auto"
             />
-            <p className="text-xs text-center mt-2 text-gray-500">
-              Pré-visualização da imagem
-            </p>
           </div>
         )}
         
@@ -303,7 +215,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
             accept="image/*"
             className="hidden"
             onChange={handleFileChange}
-            capture="environment" // Melhor para fotos de cupons no celular
+            capture="environment"
           />
           <label 
             htmlFor="image" 
@@ -329,9 +241,11 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
           </Button>
         </div>
         
-        <p className="text-xs text-gray-500">
-          Dica: Fotografe o cupom em boa luz e evite reflexos para melhor reconhecimento.
-        </p>
+        <div className="text-xs text-gray-500 space-y-1">
+          <p>• Para cupons: fotografe a seção de itens</p>
+          <p>• Para listas: garanta boa iluminação</p>
+          <p>• Evite reflexos e sombras</p>
+        </div>
       </div>
     </div>
   );
