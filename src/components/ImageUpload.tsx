@@ -31,9 +31,9 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
 
   const normalizeText = (text: string) => {
     return text
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove acentos
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
       .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, '') // Remove caracteres especiais
+      .replace(/[^a-z0-9\s]/g, '')
       .trim();
   };
 
@@ -60,24 +60,22 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
   const processReceiptText = (text: string) => {
     return text.split('\n')
       .filter(line => {
-        // Filtra linhas relevantes
         const isProductLine = line.match(/[A-ZÇÃÕÊÉÁÍÓÚÂÔÀ]{3,}/);
         const isHeader = line.match(/CNPJ|IE|RUA|TOTAL|PROTOCOLO|CONSUMIDOR|Qtd|Valor/i);
         return isProductLine && !isHeader;
       })
       .flatMap(line => {
-        // Processa cada linha do cupom
         const cleanLine = line
-          .replace(/\d{13}/g, '') // Remove EAN
-          .replace(/\d+\sUN/gi, '') // Remove unidade
-          .replace(/\d+[\.,]\d{2}/g, '') // Remove valores
-          .replace(/^\d+\s+/g, '') // Remove número do item
+          .replace(/\d{13}/g, '')
+          .replace(/\d+\sUN/gi, '')
+          .replace(/\d+[\.,]\d{2}/g, '')
+          .replace(/^\d+\s+/g, '')
           .trim();
           
-        return cleanLine.split(/[\s\/-]+/); // Divide em palavras
+        return cleanLine ? cleanLine.split(/[\s\/-]+/) : [];
       })
       .map(word => normalizeText(word))
-      .filter(word => word.length > 2);
+      .filter(word => typeof word === 'string' && word.length > 2); // Correção-chave
   };
 
   const findProductMatches = async (receiptWords: string[]) => {
@@ -90,27 +88,28 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
       if (error) throw error;
       if (!products || products.length === 0) throw new Error('Nenhum produto cadastrado');
 
-      console.log('[Supabase] Produtos carregados:', products);
-
-      // Prepara palavras dos produtos cadastrados
       const productWordsMap = new Map<string, Product>();
       products.forEach(product => {
         product.produto.split(/[,;]/).forEach(prod => {
-          normalizeText(prod)
-            .split(/[\s\/-]+/)
-            .forEach(word => {
-              if (word.length > 2) {
+          const normalized = normalizeText(prod);
+          if (normalized) {
+            normalized.split(/[\s\/-]+/).forEach(word => {
+              if (typeof word === 'string' && word.length > 2) { // Verificação crítica
                 productWordsMap.set(word, product);
               }
             });
+          }
         });
       });
 
-      // Encontra correspondências
+      const validReceiptWords = receiptWords.filter(word => 
+        typeof word === 'string' && word.length > 2
+      );
+
       const matches: Product[] = [];
       const added = new Set<string>();
       
-      receiptWords.forEach(word => {
+      validReceiptWords.forEach(word => {
         if (productWordsMap.has(word) && !added.has(word)) {
           matches.push(productWordsMap.get(word)!);
           added.add(word);
@@ -138,19 +137,15 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     setIsLoading(true);
     
     try {
-      // 1. Extrair texto
       const extractedText = await extractTextFromImage(file);
       console.log('[Processamento] Texto extraído:', extractedText);
 
-      // 2. Processar texto
       const receiptWords = processReceiptText(extractedText);
       console.log('[Processamento] Palavras processadas:', receiptWords);
 
-      // 3. Buscar correspondências
       const matches = await findProductMatches(receiptWords);
       console.log('[Processamento] Correspondências encontradas:', matches);
 
-      // 4. Resultados
       if (matches.length > 0) {
         onProcessed(matches);
         toast({
@@ -235,9 +230,9 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
         <div className="text-xs text-gray-500 space-y-2">
           <p><strong>Instruções de cadastro:</strong></p>
           <ul className="list-disc pl-5 space-y-1">
-            <li>Cadastre produtos no Singular (ex: "CAFE" ao invés de "CAFÉ MELITTA")</li>
-            <li>Use a coluna 'produto' para palavras-chave principais</li>
-            <li>Exemplo: Para reconhecer "CAFE MELITTA TRADICION", cadastre "CAFE" e "MELITTA" separadamente</li>
+            <li>Cadastre palavras-chave únicas (ex: "CAFE" em vez de "CAFÉ MELITTA")</li>
+            <li>Use apenas letras maiúsculas no cadastro</li>
+            <li>Para produtos compostos, cadastre cada elemento separadamente</li>
           </ul>
         </div>
       </div>
