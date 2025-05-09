@@ -21,6 +21,51 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     }
   };
 
+  const calculateSimilarity = (str1: string, str2: string) => {
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length <= str2.length ? str1 : str2;
+    const lengthDiff = longer.length - shorter.length;
+    
+    if (lengthDiff > longer.length * 0.3) return 0; // diferença muito grande
+    
+    let matches = 0;
+    for (let i = 0; i < shorter.length; i++) {
+      if (longer.includes(shorter[i])) matches++;
+    }
+    
+    return matches / longer.length;
+  };
+
+  const findSimilarProducts = (extractedText: string, registeredProducts: string[], threshold = 0.7) => {
+    const possibleItems = extractedText.split('\n')
+      .filter(line => line.length > 3)
+      .map(line => line.trim().replace(/\d/g, '').trim()); // remove números
+
+    const matches: {
+      extracted: string;
+      matchedProduct: string;
+      confidence: number;
+    }[] = [];
+    
+    possibleItems.forEach(item => {
+      registeredProducts.forEach(registeredProd => {
+        const similarity = calculateSimilarity(item.toLowerCase(), registeredProd.toLowerCase());
+        if (similarity >= threshold) {
+          matches.push({
+            extracted: item,
+            matchedProduct: registeredProd,
+            confidence: similarity
+          });
+        }
+      });
+    });
+
+    // Remove duplicados e ordena por confiança
+    return matches
+      .filter((v, i, a) => a.findIndex(t => t.matchedProduct === v.matchedProduct) === i)
+      .sort((a, b) => b.confidence - a.confidence);
+  };
+
   const extractTextFromImage = async (imageFile: File) => {
     try {
       // @ts-ignore - Tesseract is added via CDN
@@ -54,33 +99,63 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
       const extractedText = await extractTextFromImage(file);
       
       if (extractedText) {
+        // Get product list from Supabase to compare with
+        const { data: productData, error } = await supabase
+          .from('produto')
+          .select('produto');
+        
+        if (error) throw error;
+        
+        // Extract product names from the query result
+        const registeredProducts = productData
+          .filter(item => item.produto)
+          .map(item => item.produto || '');
+        
         // Process the extracted text
         const text = extractedText.toLowerCase();
         
-        // Split into words using spaces, commas and line breaks
-        const words = text.split(/[\s,\n]+/);
+        // First, try to find similar products using our enhanced algorithm
+        const similarProducts = findSimilarProducts(extractedText, registeredProducts, 0.6);
         
-        // Filter out irrelevant terms
-        const filteredWords = words.filter(word => {
-          // Remove numbers, dates, prices
-          if (/^\d+([.,]\d+)?$/.test(word)) return false;
+        let finalItems: string[] = [];
+        
+        if (similarProducts.length > 0) {
+          // Use matched products if found
+          finalItems = similarProducts.map(match => match.matchedProduct);
           
-          // Remove common receipt terms
-          const termsToFilter = ['total', 'cash', 'cnpj', 'receipt', 'valor', 'troco', 'cpf', 
-                              'data', 'hora', 'caixa', 'operador', 'pagamento', 'item', 
-                              'subtotal', 'desconto', 'venda', 'cupom', 'fiscal'];
+          toast({
+            title: "Sucesso",
+            description: `${finalItems.length} itens identificados com correspondência`,
+            variant: "default",
+          });
+        } else {
+          // Fallback to the previous method if no matches
+          // Split into words using spaces, commas and line breaks
+          const words = text.split(/[\s,\n]+/);
           
-          return !termsToFilter.includes(word);
-        });
+          // Filter out irrelevant terms
+          finalItems = words.filter(word => {
+            // Remove numbers, dates, prices
+            if (/^\d+([.,]\d+)?$/.test(word)) return false;
+            
+            // Remove common receipt terms
+            const termsToFilter = ['total', 'cash', 'cnpj', 'receipt', 'valor', 'troco', 'cpf', 
+                                'data', 'hora', 'caixa', 'operador', 'pagamento', 'item', 
+                                'subtotal', 'desconto', 'venda', 'cupom', 'fiscal'];
+            
+            return !termsToFilter.includes(word);
+          });
+          
+          toast({
+            title: "Processamento alternativo",
+            description: `${finalItems.length} itens extraídos da imagem (método padrão)`,
+            variant: "default",
+          });
+        }
         
         // Send extracted items back to parent component
-        onProcessed(filteredWords);
+        onProcessed(finalItems);
         
-        toast({
-          title: "Sucesso",
-          description: `${filteredWords.length} itens extraídos da imagem`,
-          variant: "default",
-        });
       } else {
         throw new Error('No text extracted from the image');
       }
