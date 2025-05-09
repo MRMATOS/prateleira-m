@@ -2,9 +2,10 @@ import React, { useState } from 'react';
 import { Upload, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
 interface ImageUploadProps {
-  onProcessed: (items: string[]) => void;
+  onProcessed: (items: {name: string, aisle: string}[]) => void;
   isLoading: boolean;
   setIsLoading: (loading: boolean) => void;
 }
@@ -21,18 +22,15 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
 
   const extractTextFromImage = async (imageFile: File) => {
     try {
-      // Configuração simplificada para listas
       const result = await (window as any).Tesseract.recognize(
         imageFile,
         'por',
         {
           logger: m => console.log('OCR Progress:', m),
-          tessedit_pageseg_mode: 3, // Modo automático para texto simples
-          preserve_interword_spaces: 0,
-          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÇÃÕÊÉÁÍÓÚÂÔÀáéíóúâêôãõç0123456789- '
+          tessedit_pageseg_mode: 6, // Modo para cupons fiscais
+          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÇÃÕÊÉÁÍÓÚÂÔÀáéíóúâêôãõç.-/ ',
         }
       );
-      
       return result.data.text;
     } catch (error) {
       console.error("Error in OCR:", error);
@@ -40,30 +38,54 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     }
   };
 
-  const processListText = (text: string) => {
-    if (!text) return [];
+  const findExactMatches = async (text: string) => {
+    // 1. Normaliza o texto (remove acentos, pontuação)
+    const normalize = (str: string) => 
+      str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
     
-    // Processamento otimizado para listas
-    return text.split('\n')
-      .map(line => line.trim())
-      .filter(line => {
-        // Filtros básicos
-        const lowerLine = line.toLowerCase();
-        return (
-          line.length > 2 && // Remove linhas muito curtas
-          !/^\d+$/.test(line) && // Remove números isolados
-          !/\d+[,.]\d{2}/.test(line) && // Remove valores (R$ 1,99)
-          !/total|subtotal|quantidade|valor/i.test(lowerLine) && // Remove termos comuns
-          !/[@#]/.test(line) // Remove caracteres especiais
-        );
-      });
+    // 2. Obtém TODOS os produtos do Supabase com seus corredores
+    const { data: products, error } = await supabase
+      .from('produtos')
+      .select('nome, corredor');
+    
+    if (error) throw error;
+    
+    // 3. Cria um mapa de produtos normalizados
+    const productMap = new Map<string, string>();
+    products.forEach(p => {
+      if (p.nome) {
+        productMap.set(normalize(p.nome), p.corredor || 'Corredor não especificado');
+      }
+    });
+    
+    // 4. Extrai palavras do texto (ignorando números e valores)
+    const words = text.split(/\s+/)
+      .filter(word => word.length > 3) // Ignora palavras muito curtas
+      .filter(word => !/\d/.test(word)) // Ignora palavras com números
+      .map(normalize);
+    
+    // 5. Encontra correspondências exatas
+    const matches: {name: string, aisle: string}[] = [];
+    const addedProducts = new Set<string>();
+    
+    words.forEach(word => {
+      if (productMap.has(word) && !addedProducts.has(word)) {
+        matches.push({
+          name: products.find(p => normalize(p.nome) === word)!.nome,
+          aisle: productMap.get(word)!
+        });
+        addedProducts.add(word);
+      }
+    });
+    
+    return matches;
   };
 
   const handleUpload = async () => {
     if (!file) {
       toast({
         title: "Erro",
-        description: "Selecione uma imagem para upload",
+        description: "Selecione uma imagem de cupom fiscal",
         variant: "destructive",
       });
       return;
@@ -77,20 +99,19 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
       if (extractedText) {
         console.log("Texto extraído:", extractedText);
         
-        const items = processListText(extractedText)
-          .filter((item, index, self) => self.indexOf(item) === index); // Remove duplicados
-
-        if (items.length > 0) {
-          onProcessed(items);
+        const matchedProducts = await findExactMatches(extractedText);
+        
+        if (matchedProducts.length > 0) {
+          onProcessed(matchedProducts);
           toast({
-            title: "Itens identificados",
-            description: `Encontramos ${items.length} itens na sua lista`,
+            title: "Produtos encontrados",
+            description: `Identificamos ${matchedProducts.length} produtos no cupom`,
             variant: "default",
           });
         } else {
           toast({
             title: "Atenção",
-            description: "Não encontramos itens válidos na imagem. Tente novamente com uma foto mais nítida.",
+            description: "Nenhum produto cadastrado foi encontrado no cupom",
             variant: "destructive",
           });
         }
@@ -99,7 +120,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
       console.error('Error processing image:', error);
       toast({
         title: "Erro",
-        description: "Falha ao processar a imagem",
+        description: "Falha ao processar o cupom fiscal",
         variant: "destructive",
       });
     } finally {
@@ -109,9 +130,9 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
 
   return (
     <div className="flex flex-col gap-4 border rounded-md p-4">
-      <h3 className="text-lg font-medium">Carregar lista</h3>
+      <h3 className="text-lg font-medium">Ler cupom fiscal</h3>
       <p className="text-sm text-gray-500">
-        Fotografe sua lista de compras manuscrita ou digital
+        Fotografe a seção de itens do cupom fiscal para identificar produtos e corredores
       </p>
       
       <div className="flex items-center gap-4">
@@ -121,13 +142,14 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
           accept="image/*"
           className="hidden"
           onChange={handleFileChange}
+          capture="environment"
         />
         <label 
           htmlFor="image" 
           className="cursor-pointer flex items-center justify-center gap-2 px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50"
         >
           <Upload className="h-4 w-4" />
-          {file ? file.name : "Selecionar imagem"}
+          {file ? file.name : "Selecionar cupom"}
         </label>
         
         <Button 
@@ -140,18 +162,18 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
               Processando...
             </>
           ) : (
-            "Ler lista"
+            "Identificar produtos"
           )}
         </Button>
       </div>
 
       <div className="text-xs text-gray-500">
-        <p><strong>Dicas para melhor resultado:</strong></p>
+        <p><strong>Instruções para melhor reconhecimento:</strong></p>
         <ul className="list-disc pl-5 space-y-1">
-          <li>Escreva cada item em uma linha separada</li>
-          <li>Use letras legíveis e evite cursivas muito complexas</li>
-          <li>Fotografe em boa luz com fundo uniforme</li>
-          <li>Mantenha a câmera paralela à lista</li>
+          <li>Fotografe apenas a seção de itens do cupom</li>
+          <li>Mantenha o cupom plano e bem iluminado</li>
+          <li>Evite dobras ou sombras na área dos produtos</li>
+          <li>Certifique-se que os produtos estão cadastrados no sistema</li>
         </ul>
       </div>
     </div>
