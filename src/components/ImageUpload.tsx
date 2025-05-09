@@ -22,63 +22,79 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
 
   const extractTextFromImage = async (imageFile: File) => {
     try {
+      console.log('Iniciando OCR...');
       const result = await (window as any).Tesseract.recognize(
         imageFile,
         'por',
         {
-          logger: m => console.log('OCR Progress:', m),
-          tessedit_pageseg_mode: 6, // Modo para cupons fiscais
-          tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZÇÃÕÊÉÁÍÓÚÂÔÀáéíóúâêôãõç.-/ ',
+          logger: m => console.log('Progresso OCR:', m),
+          tessedit_pageseg_mode: 6,
         }
       );
+      console.log('OCR concluído com sucesso');
       return result.data.text;
     } catch (error) {
-      console.error("Error in OCR:", error);
-      return null;
+      console.error("Erro no OCR:", error);
+      throw new Error('Falha ao ler texto da imagem');
     }
   };
 
   const findExactMatches = async (text: string) => {
-    // 1. Normaliza o texto (remove acentos, pontuação)
-    const normalize = (str: string) => 
-      str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
-    
-    // 2. Obtém TODOS os produtos do Supabase com seus corredores
-    const { data: products, error } = await supabase
-      .from('produtos')
-      .select('nome, corredor');
-    
-    if (error) throw error;
-    
-    // 3. Cria um mapa de produtos normalizados
-    const productMap = new Map<string, string>();
-    products.forEach(p => {
-      if (p.nome) {
-        productMap.set(normalize(p.nome), p.corredor || 'Corredor não especificado');
+    try {
+      console.log('Buscando produtos no Supabase...');
+      const { data: products, error } = await supabase
+        .from('produtos')
+        .select('nome, corredor');
+      
+      if (error) {
+        console.error('Erro Supabase:', error);
+        throw error;
       }
-    });
-    
-    // 4. Extrai palavras do texto (ignorando números e valores)
-    const words = text.split(/\s+/)
-      .filter(word => word.length > 3) // Ignora palavras muito curtas
-      .filter(word => !/\d/.test(word)) // Ignora palavras com números
-      .map(normalize);
-    
-    // 5. Encontra correspondências exatas
-    const matches: {name: string, aisle: string}[] = [];
-    const addedProducts = new Set<string>();
-    
-    words.forEach(word => {
-      if (productMap.has(word) && !addedProducts.has(word)) {
-        matches.push({
-          name: products.find(p => normalize(p.nome) === word)!.nome,
-          aisle: productMap.get(word)!
-        });
-        addedProducts.add(word);
+
+      if (!products || products.length === 0) {
+        throw new Error('Nenhum produto cadastrado encontrado');
       }
-    });
-    
-    return matches;
+
+      console.log(`${products.length} produtos carregados do Supabase`);
+
+      const normalize = (str: string) => 
+        str.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+
+      const productMap = new Map<string, string>();
+      products.forEach(p => {
+        if (p.nome) {
+          productMap.set(normalize(p.nome), p.corredor || 'Corredor não especificado');
+        }
+      });
+
+      const words = text.split(/\s+/)
+        .map(word => word.replace(/[^a-zA-ZÀ-ú]/g, '')) // Remove símbolos e números
+        .filter(word => word.length >= 3) // Palavras com 3+ letras
+        .map(normalize);
+
+      console.log('Palavras extraídas:', words);
+
+      const matches: {name: string, aisle: string}[] = [];
+      const addedProducts = new Set<string>();
+
+      words.forEach(word => {
+        if (productMap.has(word) && !addedProducts.has(word)) {
+          const originalName = products.find(p => normalize(p.nome) === word)?.nome || word;
+          matches.push({
+            name: originalName,
+            aisle: productMap.get(word)!
+          });
+          addedProducts.add(word);
+        }
+      });
+
+      console.log(`${matches.length} correspondências encontradas`);
+      return matches;
+
+    } catch (error) {
+      console.error('Erro na busca de produtos:', error);
+      throw error;
+    }
   };
 
   const handleUpload = async () => {
@@ -94,33 +110,36 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     setIsLoading(true);
     
     try {
+      // 1. Extração de texto
       const extractedText = await extractTextFromImage(file);
-      
-      if (extractedText) {
-        console.log("Texto extraído:", extractedText);
-        
-        const matchedProducts = await findExactMatches(extractedText);
-        
-        if (matchedProducts.length > 0) {
-          onProcessed(matchedProducts);
-          toast({
-            title: "Produtos encontrados",
-            description: `Identificamos ${matchedProducts.length} produtos no cupom`,
-            variant: "default",
-          });
-        } else {
-          toast({
-            title: "Atenção",
-            description: "Nenhum produto cadastrado foi encontrado no cupom",
-            variant: "destructive",
-          });
-        }
+      if (!extractedText) {
+        throw new Error('Nenhum texto foi extraído da imagem');
       }
-    } catch (error) {
-      console.error('Error processing image:', error);
+
+      // 2. Busca de correspondências
+      const matchedProducts = await findExactMatches(extractedText);
+      
+      // 3. Resultados
+      if (matchedProducts.length > 0) {
+        onProcessed(matchedProducts);
+        toast({
+          title: "Sucesso",
+          description: `Encontramos ${matchedProducts.length} produto(s) no cupom`,
+          variant: "default",
+        });
+      } else {
+        toast({
+          title: "Aviso",
+          description: "Nenhum produto cadastrado foi encontrado no cupom",
+          variant: "destructive",
+        });
+      }
+
+    } catch (error: any) {
+      console.error('Erro no processamento:', error);
       toast({
         title: "Erro",
-        description: "Falha ao processar o cupom fiscal",
+        description: error.message || "Falha ao processar o cupom fiscal",
         variant: "destructive",
       });
     } finally {
@@ -132,7 +151,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     <div className="flex flex-col gap-4 border rounded-md p-4">
       <h3 className="text-lg font-medium">Ler cupom fiscal</h3>
       <p className="text-sm text-gray-500">
-        Fotografe a seção de itens do cupom fiscal para identificar produtos e corredores
+        Fotografe a seção de itens do cupom fiscal para identificar produtos
       </p>
       
       <div className="flex items-center gap-4">
@@ -168,12 +187,11 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
       </div>
 
       <div className="text-xs text-gray-500">
-        <p><strong>Instruções para melhor reconhecimento:</strong></p>
+        <p><strong>Verifique antes de enviar:</strong></p>
         <ul className="list-disc pl-5 space-y-1">
-          <li>Fotografe apenas a seção de itens do cupom</li>
-          <li>Mantenha o cupom plano e bem iluminado</li>
-          <li>Evite dobras ou sombras na área dos produtos</li>
-          <li>Certifique-se que os produtos estão cadastrados no sistema</li>
+          <li>A imagem está nítida e legível</li>
+          <li>Os produtos estão cadastrados no sistema</li>
+          <li>Você está fotografando apenas a área de itens</li>
         </ul>
       </div>
     </div>
