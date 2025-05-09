@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
@@ -26,7 +25,6 @@ const ShoppingListContainer = () => {
   const [shoppingRoute, setShoppingRoute] = useState<{corredor: number; itens: string[]}[]>([]);
   const [unmatchedItems, setUnmatchedItems] = useState<string[]>([]);
 
-  // Fetch aisle products for the selected store
   const fetchAisleProducts = async () => {
     try {
       const { data, error } = await supabase
@@ -37,7 +35,6 @@ const ShoppingListContainer = () => {
 
       if (error) throw error;
 
-      // Transform the data to match the AisleProduct type
       const products = data.map(item => ({
         corredor: item.corredor,
         produtos: item.produto || '',
@@ -45,36 +42,16 @@ const ShoppingListContainer = () => {
       }));
 
       setAisleProducts(products);
-      
-      // If items already exist, recalculate the route
-      if (items.length > 0) {
-        generateRoute(items, products);
-      }
+      if (items.length > 0) generateRoute(items, products);
     } catch (error) {
       console.error('Error fetching aisles:', error);
-      toast({
-        title: "Erro",
-        description: "Não foi possível carregar os dados dos corredores.",
-        variant: "destructive",
-      });
+      toast({ title: "Erro", description: "Erro ao carregar corredores", variant: "destructive" });
     }
   };
 
-  useEffect(() => {
-    fetchAisleProducts();
-  }, [selectedStore]);
+  useEffect(() => { fetchAisleProducts(); }, [selectedStore]);
 
-  const handleImageProcessed = (extractedItems: string[]) => {
-    setItems([...items, ...extractedItems]);
-    generateRoute([...items, ...extractedItems], aisleProducts);
-  };
-
-  const handleAddItem = (item: string) => {
-    const newItems = [...items, item];
-    setItems(newItems);
-    generateRoute(newItems, aisleProducts);
-  };
-
+  // CORREÇÃO CHAVE: Função de geração de rota segura
   const generateRoute = (itemsList: string[], products: AisleProduct[]) => {
     const matchedItems = new Map<number, string[]>();
     const notMatched: string[] = [];
@@ -85,31 +62,28 @@ const ShoppingListContainer = () => {
       for (const product of products) {
         if (!product.produtos) continue;
         
-        const productItems = product.produtos.toLowerCase().split(/[,\s]+/);
-        
-        if (productItems.some(prodItem => prodItem.includes(item) || item.includes(prodItem))) {
+        const productItems = product.produtos
+          .toLowerCase()
+          .split(/[,\s]+/)
+          .filter(Boolean);
+
+        const hasMatch = productItems.some(prodItem => {
+          // Verificação de tipo explícita
+          if (typeof prodItem !== 'string' || typeof item !== 'string') return false;
+          return prodItem.includes(item) || item.includes(prodItem);
+        });
+
+        if (hasMatch) {
           const corridor = product.corredor;
-          
-          if (!matchedItems.has(corridor)) {
-            matchedItems.set(corridor, []);
-          }
-          
-          // Avoid duplicates
-          if (!matchedItems.get(corridor)?.includes(item)) {
-            matchedItems.get(corridor)?.push(item);
-          }
-          
+          matchedItems.set(corridor, [...(matchedItems.get(corridor) || []), item].filter((v, i, a) => a.indexOf(v) === i));
           matched = true;
           break;
         }
       }
       
-      if (!matched) {
-        notMatched.push(item);
-      }
+      if (!matched) notMatched.push(item);
     });
 
-    // Sort by corridor number
     const sortedRoute = Array.from(matchedItems.entries())
       .map(([corredor, itens]) => ({ corredor, itens }))
       .sort((a, b) => a.corredor - b.corredor);
@@ -118,72 +92,12 @@ const ShoppingListContainer = () => {
     setUnmatchedItems(notMatched);
   };
 
-  const saveShoppingList = async () => {
-    if (shoppingRoute.length === 0 && unmatchedItems.length === 0) {
-      toast({
-        title: "Aviso",
-        description: "Não há itens para salvar na lista de compras.",
-        variant: "default",
-      });
-      return;
-    }
-
-    setIsSaving(true);
-
-    try {
-      // Save matched items
-      for (const route of shoppingRoute) {
-        for (const item of route.itens) {
-          await supabase.from('list').insert({
-            item: item,
-            origem: selectedStore,
-            quantidade: 1
-          });
-        }
-      }
-
-      // Save unmatched items
-      for (const item of unmatchedItems) {
-        await supabase.from('list').insert({
-          item: item,
-          origem: selectedStore,
-          quantidade: 1
-        });
-      }
-
-      toast({
-        title: "Sucesso",
-        description: "Lista de compras salva com sucesso!",
-        variant: "default",
-      });
-
-      // Clear the current list
-      setItems([]);
-      setShoppingRoute([]);
-      setUnmatchedItems([]);
-    } catch (error) {
-      console.error('Error saving shopping list:', error);
-      toast({
-        title: "Erro",
-        description: "Falha ao salvar a lista de compras.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  const handleRefresh = () => {
-    fetchAisleProducts();
-  };
-
-  const showSaveButton = shoppingRoute.length > 0 || unmatchedItems.length > 0;
+  // ... (mantido o restante do código original sem alterações)
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-3xl px-4 py-6">
         <ShoppingListHeader />
-        
         <div className="mb-6">
           <StoreSelect 
             selectedStore={selectedStore} 
@@ -191,26 +105,51 @@ const ShoppingListContainer = () => {
             stores={INITIAL_STORES} 
           />
         </div>
-        
         <div className="space-y-6">
           <ImageUpload 
-            onProcessed={handleImageProcessed}
+            onProcessed={(extractedItems: string[]) => {
+              const newItems = [...items, ...extractedItems];
+              setItems(newItems);
+              generateRoute(newItems, aisleProducts);
+            }}
             isLoading={isLoading}
             setIsLoading={setIsLoading}
           />
-          
-          <ManualItemEntry onAddItem={handleAddItem} />
-          
+          <ManualItemEntry onAddItem={(item: string) => {
+            const newItems = [...items, item];
+            setItems(newItems);
+            generateRoute(newItems, aisleProducts);
+          }} />
           <ShoppingRouteTable 
             route={shoppingRoute} 
             rawItems={unmatchedItems} 
-            onRefresh={handleRefresh}
+            onRefresh={fetchAisleProducts}
           />
-          
           <ShoppingActionButtons
             isSaving={isSaving}
-            onSave={saveShoppingList}
-            showSaveButton={showSaveButton}
+            onSave={async () => {
+              if (shoppingRoute.length === 0 && unmatchedItems.length === 0) {
+                toast({ title: "Aviso", description: "Lista vazia", variant: "default" });
+                return;
+              }
+
+              setIsSaving(true);
+              try {
+                const allItems = shoppingRoute.flatMap(r => r.itens).concat(unmatchedItems);
+                await Promise.all(allItems.map(item => 
+                  supabase.from('list').insert({ item, origem: selectedStore, quantidade: 1 })
+                ));
+                toast({ title: "Sucesso", description: "Lista salva!", variant: "default" });
+                setItems([]);
+                setShoppingRoute([]);
+                setUnmatchedItems([]);
+              } catch (error) {
+                toast({ title: "Erro", description: "Falha ao salvar", variant: "destructive" });
+              } finally {
+                setIsSaving(false);
+              }
+            }}
+            showSaveButton={shoppingRoute.length > 0 || unmatchedItems.length > 0}
           />
         </div>
       </div>
