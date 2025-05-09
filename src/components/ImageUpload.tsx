@@ -31,26 +31,28 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
 
   const normalizeText = (text: string) => {
     return text
-      .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "") // Remove acentos
       .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, '')
+      .replace(/[^a-z0-9\s]/g, '') // Remove caracteres especiais
       .trim();
   };
 
   const extractTextFromImage = async (imageFile: File) => {
     try {
+      console.log('[OCR] Iniciando processamento...');
       const result = await (window as any).Tesseract.recognize(
         imageFile,
         'por',
         {
-          logger: m => console.log('OCR Progress:', m),
+          logger: m => console.log('[OCR] Progresso:', m),
           tessedit_pageseg_mode: 6,
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZÇÃÕÊÉÁÍÓÚÂÔÀ0123456789 ./-',
         }
       );
+      console.log('[OCR] Texto extraído com sucesso');
       return result.data.text;
     } catch (error) {
-      console.error("Error in OCR:", error);
+      console.error("[OCR] Erro:", error);
       throw new Error('Falha ao ler texto do cupom');
     }
   };
@@ -59,24 +61,28 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     return text.split('\n')
       .filter(line => {
         // Filtra linhas relevantes
-        const hasProduct = line.match(/[A-ZÇÃÕÊÉÁÍÓÚÂÔÀ]{5,}/);
+        const isProductLine = line.match(/[A-ZÇÃÕÊÉÁÍÓÚÂÔÀ]{3,}/);
         const isHeader = line.match(/CNPJ|IE|RUA|TOTAL|PROTOCOLO|CONSUMIDOR|Qtd|Valor/i);
-        return hasProduct && !isHeader;
+        return isProductLine && !isHeader;
       })
-      .map(line => {
-        // Limpeza avançada da linha
-        return line
-          .replace(/\d{13}/g, '')       // Remove EAN
-          .replace(/\d+\sUN/g, '')      // Remove quantidade
+      .flatMap(line => {
+        // Processa cada linha do cupom
+        const cleanLine = line
+          .replace(/\d{13}/g, '') // Remove EAN
+          .replace(/\d+\sUN/gi, '') // Remove unidade
           .replace(/\d+[\.,]\d{2}/g, '') // Remove valores
-          .replace(/^\d+\s+/g, '')      // Remove número do item
+          .replace(/^\d+\s+/g, '') // Remove número do item
           .trim();
-      });
+          
+        return cleanLine.split(/[\s\/-]+/); // Divide em palavras
+      })
+      .map(word => normalizeText(word))
+      .filter(word => word.length > 2);
   };
 
-  const findMatches = async (text: string) => {
+  const findProductMatches = async (receiptWords: string[]) => {
     try {
-      // Busca produtos cadastrados
+      console.log('[Supabase] Buscando produtos...');
       const { data: products, error } = await supabase
         .from('produto')
         .select('corredor, produto, loja');
@@ -84,38 +90,37 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
       if (error) throw error;
       if (!products || products.length === 0) throw new Error('Nenhum produto cadastrado');
 
-      // Processa texto do cupom
-      const receiptItems = processReceiptText(text)
-        .map(item => normalizeText(item))
-        .filter(item => item.length > 3);
+      console.log('[Supabase] Produtos carregados:', products);
 
-      console.log('Itens processados:', receiptItems);
-
-      // Cria mapa de produtos normalizados
-      const productMap = new Map<string, Product>();
-      products.forEach(p => {
-        const cleanProducts = p.produto.split(/[,;]/).map(prod => normalizeText(prod.trim()));
-        cleanProducts.forEach(prod => {
-          productMap.set(prod, p);
+      // Prepara palavras dos produtos cadastrados
+      const productWordsMap = new Map<string, Product>();
+      products.forEach(product => {
+        product.produto.split(/[,;]/).forEach(prod => {
+          normalizeText(prod)
+            .split(/[\s\/-]+/)
+            .forEach(word => {
+              if (word.length > 2) {
+                productWordsMap.set(word, product);
+              }
+            });
         });
       });
 
       // Encontra correspondências
       const matches: Product[] = [];
       const added = new Set<string>();
-
-      receiptItems.forEach(item => {
-        const normalizedItem = normalizeText(item);
-        if (productMap.has(normalizedItem) && !added.has(normalizedItem)) {
-          matches.push(productMap.get(normalizedItem)!);
-          added.add(normalizedItem);
+      
+      receiptWords.forEach(word => {
+        if (productWordsMap.has(word) && !added.has(word)) {
+          matches.push(productWordsMap.get(word)!);
+          added.add(word);
         }
       });
 
       return matches;
 
     } catch (error) {
-      console.error('Erro no processamento:', error);
+      console.error('[Erro] Processamento:', error);
       throw error;
     }
   };
@@ -133,27 +138,35 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     setIsLoading(true);
     
     try {
+      // 1. Extrair texto
       const extractedText = await extractTextFromImage(file);
-      console.log('Texto extraído:', extractedText);
+      console.log('[Processamento] Texto extraído:', extractedText);
 
-      const matchedProducts = await findMatches(extractedText);
-      
-      if (matchedProducts.length > 0) {
-        onProcessed(matchedProducts);
+      // 2. Processar texto
+      const receiptWords = processReceiptText(extractedText);
+      console.log('[Processamento] Palavras processadas:', receiptWords);
+
+      // 3. Buscar correspondências
+      const matches = await findProductMatches(receiptWords);
+      console.log('[Processamento] Correspondências encontradas:', matches);
+
+      // 4. Resultados
+      if (matches.length > 0) {
+        onProcessed(matches);
         toast({
-          title: "Produtos identificados",
-          description: `Encontrados ${matchedProducts.length} produtos: ${matchedProducts.map(p => p.produto).join(', ')}`,
+          title: "Produtos encontrados!",
+          description: `${matches.length} itens identificados: ${matches.map(p => p.produto).join(', ')}`,
           variant: "default",
         });
       } else {
         toast({
           title: "Nenhum produto reconhecido",
-          description: "Verifique se os produtos estão cadastrados no formato exato do cupom",
+          description: "Adicione os produtos ao sistema ou verifique o cadastro",
           variant: "destructive",
         });
       }
     } catch (error: any) {
-      console.error('Erro geral:', error);
+      console.error('[Erro Geral]', error);
       toast({
         title: "Erro de processamento",
         description: error.message || "Erro desconhecido",
@@ -167,9 +180,9 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
 
   return (
     <div className="flex flex-col gap-4 border rounded-md p-4">
-      <h3 className="text-lg font-medium">Leitor de Cupons Fiscais</h3>
+      <h3 className="text-lg font-medium">Identificador de Produtos</h3>
       <p className="text-sm text-gray-500">
-        Fotografe a seção de itens do cupom fiscal (formato padrão brasileiro)
+        Fotografe o cupom fiscal para localizar produtos e corredores
       </p>
 
       <div className="flex flex-col gap-4">
@@ -181,7 +194,7 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
               className="max-h-40 mx-auto"
             />
             <p className="text-xs text-center mt-2 text-gray-500">
-              Pré-visualização do cupom
+              Visualização da imagem carregada
             </p>
           </div>
         )}
@@ -220,11 +233,11 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
         </div>
 
         <div className="text-xs text-gray-500 space-y-2">
-          <p><strong>Requisitos para bom funcionamento:</strong></p>
+          <p><strong>Instruções de cadastro:</strong></p>
           <ul className="list-disc pl-5 space-y-1">
-            <li>Os produtos devem estar cadastrados exatamente como aparecem no cupom</li>
-            <li>Formato esperado: Coluna 'produto' com nomes em maiúsculas</li>
-            <li>Exemplo: 'FILTRO DE PAPEL BOM JESU' no cupom → 'Filtro de Papel Bom Jesu' no banco</li>
+            <li>Cadastre produtos no Singular (ex: "CAFE" ao invés de "CAFÉ MELITTA")</li>
+            <li>Use a coluna 'produto' para palavras-chave principais</li>
+            <li>Exemplo: Para reconhecer "CAFE MELITTA TRADICION", cadastre "CAFE" e "MELITTA" separadamente</li>
           </ul>
         </div>
       </div>
