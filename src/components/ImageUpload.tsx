@@ -21,6 +21,22 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     }
   };
 
+  const extractTextFromImage = async (imageFile: File) => {
+    try {
+      // @ts-ignore - Tesseract is added via CDN
+      const result = await window.Tesseract.recognize(
+        imageFile,
+        'por', // Portuguese language
+        { logger: progress => console.log('OCR Progress:', progress) }
+      );
+      
+      return result.data.text;
+    } catch (error) {
+      console.error("Error in OCR:", error);
+      return null;
+    }
+  };
+
   const handleUpload = async () => {
     if (!file) {
       toast({
@@ -34,25 +50,12 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
     setIsLoading(true);
     
     try {
-      // Create form data to send to OCR service
-      const formData = new FormData();
-      formData.append('image', file);
-
-      // Send to OCR service
-      const response = await fetch('https://ocr-service-2gr7.onrender.com/ocr', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        throw new Error(`OCR request failed with status ${response.status}`);
-      }
-
-      const data = await response.json();
+      // Process the image using Tesseract.js
+      const extractedText = await extractTextFromImage(file);
       
-      if (data && data.text) {
+      if (extractedText) {
         // Process the extracted text
-        const text = data.text.toLowerCase();
+        const text = extractedText.toLowerCase();
         
         // Split into words using spaces, commas and line breaks
         const words = text.split(/[\s,\n]+/);
@@ -64,8 +67,8 @@ const ImageUpload: React.FC<ImageUploadProps> = ({ onProcessed, isLoading, setIs
           
           // Remove common receipt terms
           const termsToFilter = ['total', 'cash', 'cnpj', 'receipt', 'valor', 'troco', 'cpf', 
-                                'data', 'hora', 'caixa', 'operador', 'pagamento', 'item', 
-                                'subtotal', 'desconto', 'venda', 'cupom', 'fiscal'];
+                              'data', 'hora', 'caixa', 'operador', 'pagamento', 'item', 
+                              'subtotal', 'desconto', 'venda', 'cupom', 'fiscal'];
           
           return !termsToFilter.includes(word);
         });
