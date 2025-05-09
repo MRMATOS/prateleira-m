@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Loader2, Save } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -28,40 +27,40 @@ const ShoppingList = () => {
   const [unmatchedItems, setUnmatchedItems] = useState<string[]>([]);
 
   // Fetch aisle products for the selected store
-  useEffect(() => {
-    const fetchAisleProducts = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('produto')
-          .select('corredor, produto, loja')
-          .eq('loja', selectedStore)
-          .order('corredor', { ascending: true });
+  const fetchAisleProducts = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('produto')
+        .select('corredor, produto, loja')
+        .eq('loja', selectedStore)
+        .order('corredor', { ascending: true });
 
-        if (error) throw error;
+      if (error) throw error;
 
-        // Transform the data to match the AisleProduct type
-        const products = data.map(item => ({
-          corredor: item.corredor,
-          produtos: item.produto || '',
-          loja: item.loja
-        }));
+      // Transform the data to match the AisleProduct type
+      const products = data.map(item => ({
+        corredor: item.corredor,
+        produtos: item.produto || '',
+        loja: item.loja
+      }));
 
-        setAisleProducts(products);
-        
-        // If items already exist, recalculate the route
-        if (items.length > 0) {
-          generateRoute(items, products);
-        }
-      } catch (error) {
-        console.error('Error fetching aisles:', error);
-        toast({
-          title: "Erro",
-          description: "Não foi possível carregar os dados dos corredores.",
-          variant: "destructive",
-        });
+      setAisleProducts(products);
+      
+      // If items already exist, recalculate the route
+      if (items.length > 0) {
+        generateRoute(items, products);
       }
-    };
+    } catch (error) {
+      console.error('Error fetching aisles:', error);
+      toast({
+        title: "Erro",
+        description: "Não foi possível carregar os dados dos corredores.",
+        variant: "destructive",
+      });
+    }
+  };
 
+  useEffect(() => {
     fetchAisleProducts();
   }, [selectedStore, toast]);
 
@@ -174,6 +173,10 @@ const ShoppingList = () => {
     }
   };
 
+  const handleRefresh = () => {
+    fetchAisleProducts();
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-3xl px-4 py-6">
@@ -205,7 +208,11 @@ const ShoppingList = () => {
           
           <ManualItemEntry onAddItem={handleAddItem} />
           
-          <ShoppingRouteTable route={shoppingRoute} rawItems={unmatchedItems} />
+          <ShoppingRouteTable 
+            route={shoppingRoute} 
+            rawItems={unmatchedItems} 
+            onRefresh={handleRefresh}
+          />
           
           {(shoppingRoute.length > 0 || unmatchedItems.length > 0) && (
             <div className="flex justify-end mt-4">
