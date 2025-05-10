@@ -3,9 +3,8 @@ import React, { useState } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { Edit, Trash2 } from 'lucide-react';
+import { Edit, Trash2, Check, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { supabase } from '@/integrations/supabase/client';
 
 interface RouteItem {
   corredor: number;
@@ -16,9 +15,17 @@ interface ShoppingRouteTableProps {
   route: RouteItem[];
   rawItems: string[];
   onRefresh: () => void;
+  onDeleteItem: (item: string) => void;
+  onEditItem: (oldItem: string, newItem: string) => void;
 }
 
-const ShoppingRouteTable: React.FC<ShoppingRouteTableProps> = ({ route, rawItems, onRefresh }) => {
+const ShoppingRouteTable: React.FC<ShoppingRouteTableProps> = ({ 
+  route, 
+  rawItems, 
+  onRefresh,
+  onDeleteItem,
+  onEditItem
+}) => {
   const { toast } = useToast();
   const [editingItem, setEditingItem] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
@@ -30,31 +37,16 @@ const ShoppingRouteTable: React.FC<ShoppingRouteTableProps> = ({ route, rawItems
 
   const handleEdit = async (item: string) => {
     if (editingItem === item) {
-      // Save changes
-      try {
-        const { error } = await supabase
-          .from('list')
-          .update({ item: editValue })
-          .eq('item', item);
-
-        if (error) throw error;
-
+      // Save changes only if the value changed and isn't empty
+      if (editValue.trim() !== '' && editValue !== item) {
+        onEditItem(item, editValue.trim());
         toast({
           title: "Sucesso",
           description: "Item atualizado com sucesso",
           variant: "default",
         });
-        
-        setEditingItem(null);
-        onRefresh();
-      } catch (error) {
-        console.error('Error updating item:', error);
-        toast({
-          title: "Erro",
-          description: "Falha ao atualizar o item",
-          variant: "destructive",
-        });
       }
+      setEditingItem(null);
     } else {
       // Start editing
       setEditingItem(item);
@@ -67,20 +59,12 @@ const ShoppingRouteTable: React.FC<ShoppingRouteTableProps> = ({ route, rawItems
     
     setIsDeleting(true);
     try {
-      const { error } = await supabase
-        .from('list')
-        .delete()
-        .eq('item', item);
-
-      if (error) throw error;
-
+      onDeleteItem(item);
       toast({
         title: "Sucesso",
         description: "Item removido com sucesso",
         variant: "default",
       });
-      
-      onRefresh();
     } catch (error) {
       console.error('Error deleting item:', error);
       toast({
@@ -91,6 +75,10 @@ const ShoppingRouteTable: React.FC<ShoppingRouteTableProps> = ({ route, rawItems
     } finally {
       setIsDeleting(false);
     }
+  };
+
+  const handleCancelEdit = () => {
+    setEditingItem(null);
   };
 
   const renderItemActions = (item: string) => {
@@ -105,10 +93,10 @@ const ShoppingRouteTable: React.FC<ShoppingRouteTableProps> = ({ route, rawItems
             autoFocus
           />
           <Button size="sm" variant="outline" onClick={() => handleEdit(item)}>
-            Salvar
+            <Check className="h-4 w-4" />
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => setEditingItem(null)}>
-            Cancelar
+          <Button size="sm" variant="ghost" onClick={handleCancelEdit}>
+            <X className="h-4 w-4" />
           </Button>
         </div>
       );

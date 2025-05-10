@@ -1,25 +1,26 @@
+
 // src/components/ui/ImageUpload.tsx
 'use client';
 
 import { useState } from 'react';
 import { Upload, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useToast } from '@/components/ui/use-toast';
-import { supabase } from '@/lib/supabaseClient';
+import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
 
-interface Product {
-  corredor: number;
-  produto: string;
-  loja: string;
+interface ImageUploadProps {
+  onProcessed: (items: string[]) => void;
+  isLoading: boolean;
+  setIsLoading: (loading: boolean) => void;
 }
 
-export default function ImageUpload() {
+export default function ImageUpload({ onProcessed, isLoading, setIsLoading }: ImageUploadProps) {
   const { toast } = useToast();
   const [file, setFile] = useState<File | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [results, setResults] = useState<Product[]>([]);
 
   const normalizeText = (text: string) => {
+    if (typeof text !== 'string') return '';
+    
     return text
       .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
       .toLowerCase()
@@ -28,8 +29,12 @@ export default function ImageUpload() {
   };
 
   const processReceiptText = (text: string) => {
+    if (typeof text !== 'string') return [];
+    
     return text.split('\n')
       .filter(line => {
+        if (typeof line !== 'string') return false;
+        
         const isProduct = line.match(/[A-ZÇÃÕÊÉÁÍÓÚÂÔÀ]{3,}/);
         const isHeader = line.match(/CNPJ|IE|RUA|TOTAL|PROTOCOLO|CONSUMIDOR|Qtd|Valor/i);
         return isProduct && !isHeader;
@@ -48,6 +53,77 @@ export default function ImageUpload() {
       .filter(word => word.length > 2);
   };
 
+  // Função para calcular similaridade entre duas strings
+  const calculateSimilarity = (str1: string, str2: string): number => {
+    if (typeof str1 !== 'string' || typeof str2 !== 'string') return 0;
+    
+    const longer = str1.length > str2.length ? str1 : str2;
+    const shorter = str1.length <= str2.length ? str1 : str2;
+    const lengthDiff = longer.length - shorter.length;
+    
+    if (lengthDiff > longer.length * 0.3) return 0; // diferença muito grande
+    
+    let matches = 0;
+    for (let i = 0; i < shorter.length; i++) {
+      if (longer.includes(shorter[i])) matches++;
+    }
+    
+    return matches / longer.length;
+  };
+
+  // Função para encontrar produtos similares na base de dados
+  const findSimilarProducts = async (extractedWords: string[], threshold = 0.6) => {
+    try {
+      // Busca todos os produtos do banco
+      const { data: productsData, error } = await supabase
+        .from('produto')
+        .select('produto');
+      
+      if (error) throw error;
+
+      // Extrai palavras dos produtos cadastrados
+      const registeredProducts = productsData
+        .filter(p => p.produto && typeof p.produto === 'string')
+        .flatMap(p => p.produto!.split(/[,;]/)
+          .map(word => normalizeText(word))
+          .filter(word => word.length > 2)
+        );
+      
+      // Encontra correspondências
+      const matches = new Set<string>();
+      
+      for (const word of extractedWords) {
+        if (!word || typeof word !== 'string') continue;
+        
+        let found = false;
+        for (const prod of registeredProducts) {
+          if (!prod || typeof prod !== 'string') continue;
+          
+          const similarity = calculateSimilarity(word, prod);
+          if (similarity >= threshold || 
+             (prod.length > 2 && word.includes(prod)) || 
+             (word.length > 2 && prod.includes(word))
+          ) {
+            matches.add(word);
+            found = true;
+            break;
+          }
+        }
+        
+        // Se a palavra for maior que 4 caracteres, podemos considerar como um possível item
+        if (!found && word.length > 4) {
+          matches.add(word);
+        }
+      }
+      
+      return Array.from(matches);
+      
+    } catch (error) {
+      console.error("Erro ao buscar produtos similares:", error);
+      return [];
+    }
+  };
+
   const handleUpload = async () => {
     if (!file) {
       toast({
@@ -59,53 +135,60 @@ export default function ImageUpload() {
     }
 
     setIsLoading(true);
+    console.log('[OCR] Iniciando processamento');
     
     try {
-      // OCR Processing
-      const { data: { text } } = await window.Tesseract.recognize(
+      // OCR Processing usando Window.Tesseract
+      if (!window.Tesseract) {
+        throw new Error("Tesseract não está disponível");
+      }
+      
+      // Log para acompanhar o progresso
+      const ocrResult = await window.Tesseract.recognize(
         file,
         'por',
         {
-          logger: m => console.log('OCR Progress:', m),
+          logger: m => console.log('[OCR] Progresso:', m),
           tessedit_pageseg_mode: 6,
         }
       );
 
-      // Process matches
-      const receiptWords = processReceiptText(text);
-      const { data: products } = await supabase
-        .from('produto')
-        .select('corredor, produto, loja');
+      const extractedText = ocrResult?.data?.text || "";
+      console.log('[OCR] Texto extraído com sucesso');
+      console.log('[Processamento] Texto extraído:', extractedText);
 
-      const productMap = new Map<string, Product>();
-      products?.forEach(p => {
-        p.produto.split(/[,;]/).forEach(prod => {
-          normalizeText(prod).split(/\s+/).forEach(word => {
-            if (word.length > 2) productMap.set(word, p);
-          });
-        });
-      });
+      // Extração de palavras do texto
+      const extractedWords = processReceiptText(extractedText);
+      console.log('[Processamento] Palavras processadas:', extractedWords);
 
-      const matches: Product[] = [];
-      const added = new Set<string>();
+      // Busca por produtos similares
+      console.log('[Supabase] Buscando produtos...');
+      const matchedProducts = await findSimilarProducts(extractedWords);
       
-      receiptWords.forEach(word => {
-        if (productMap.has(word) && !added.has(word)) {
-          matches.push(productMap.get(word)!);
-          added.add(word);
-        }
-      });
-
-      setResults(matches);
-      toast({
-        title: matches.length ? 'Sucesso!' : 'Aviso',
-        description: matches.length 
-          ? `${matches.length} produtos identificados`
-          : 'Nenhum produto cadastrado encontrado',
-      });
+      // Verifica se temos produtos encontrados
+      if (matchedProducts.length > 0) {
+        console.log('[Processamento] Produtos encontrados:', matchedProducts);
+        onProcessed(matchedProducts);
+        
+        toast({
+          title: 'Sucesso!',
+          description: `${matchedProducts.length} produtos identificados`,
+          variant: 'default',
+        });
+      } else {
+        // Se não encontrou correspondências, usa as palavras extraídas diretamente
+        console.log('[Processamento] Nenhuma correspondência encontrada, usando palavras extraídas.');
+        onProcessed(extractedWords);
+        
+        toast({
+          title: 'Aviso',
+          description: 'Itens extraídos sem correspondência direta',
+          variant: 'default',
+        });
+      }
 
     } catch (error) {
-      console.error('Erro:', error);
+      console.error('[Erro Geral]', error);
       toast({
         title: 'Erro de processamento',
         description: error instanceof Error ? error.message : 'Erro desconhecido',
@@ -117,7 +200,8 @@ export default function ImageUpload() {
   };
 
   return (
-    <div className="w-full max-w-2xl space-y-6">
+    <div className="border rounded-md p-4 bg-white shadow-sm">
+      <h3 className="text-lg font-medium mb-4">Upload de Cupom Fiscal</h3>
       <div className="flex gap-4 items-center">
         <input
           type="file"
@@ -143,23 +227,6 @@ export default function ImageUpload() {
           {isLoading ? 'Processando...' : 'Analisar'}
         </Button>
       </div>
-
-      {results.length > 0 && (
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold">Resultados da Busca</h3>
-          <div className="grid gap-4 md:grid-cols-2">
-            {results.map((item, index) => (
-              <div key={index} className="p-4 border rounded-lg bg-card">
-                <h4 className="font-medium">{item.produto}</h4>
-                <div className="text-sm text-muted-foreground mt-2">
-                  <p>Corredor: {item.corredor}</p>
-                  <p>Loja: {item.loja}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
