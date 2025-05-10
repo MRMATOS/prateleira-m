@@ -110,10 +110,8 @@ export default function ImageUpload({ onProcessed, isLoading, setIsLoading }: Im
           }
         }
         
-        // Se a palavra for maior que 4 caracteres, podemos considerar como um possível item
-        if (!found && word.length > 4) {
-          matches.add(word);
-        }
+        // Não adicionar automaticamente palavras não encontradas
+        // Apenas retornar aquelas que tiverem correspondência
       }
       
       return Array.from(matches);
@@ -176,14 +174,12 @@ export default function ImageUpload({ onProcessed, isLoading, setIsLoading }: Im
           variant: 'default',
         });
       } else {
-        // Se não encontrou correspondências, usa as palavras extraídas diretamente
-        console.log('[Processamento] Nenhuma correspondência encontrada, usando palavras extraídas.');
-        onProcessed(extractedWords);
-        
+        // Se não encontrou correspondências, não envia nada
+        console.log('[Processamento] Nenhuma correspondência encontrada.');
         toast({
-          title: 'Aviso',
-          description: 'Itens extraídos sem correspondência direta',
-          variant: 'default',
+          title: 'Nenhum produto encontrado',
+          description: 'Nenhum produto foi identificado no cupom',
+          variant: 'destructive',
         });
       }
 

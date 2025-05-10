@@ -14,7 +14,7 @@ const ManualItemEntry: React.FC<ManualItemEntryProps> = ({ onAddItem }) => {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (item.trim()) {
-      onAddItem(item.trim().toLowerCase());
+      onAddItem(item.trim());
       setItem('');
     }
   };
@@ -22,6 +22,9 @@ const ManualItemEntry: React.FC<ManualItemEntryProps> = ({ onAddItem }) => {
   return (
     <div className="border rounded-md p-4">
       <h3 className="text-lg font-medium mb-4">Adicionar item manualmente</h3>
+      <p className="text-sm text-gray-500 mb-2">
+        Você pode adicionar vários itens separados por vírgulas (ex: arroz, café, leite)
+      </p>
       <form onSubmit={handleSubmit} className="flex gap-2">
         <Input
           type="text"

@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { supabase } from '@/integrations/supabase/client';
@@ -15,6 +14,72 @@ const INITIAL_STORES = [
   'Dal Pozzo Cidade dos Lagos',
   'Dal Pozzo Home Center'
 ];
+
+// Helper function to check if two aisles are physically adjacent in Block B (mirrored layout)
+const areAislesAdjacent = (aisle1: number, aisle2: number): boolean => {
+  // If both aisles are in Block B (25-81)
+  if (aisle1 >= 25 && aisle1 <= 81 && aisle2 >= 25 && aisle2 <= 81) {
+    // Calculate the mirrored/paired aisle numbers
+    const mirrorAisle1 = 106 - aisle1; // 25->81, 26->80, etc.
+    
+    // Check if the aisles are consecutive or mirrored-adjacent
+    return Math.abs(aisle1 - aisle2) === 1 || // Consecutive standard aisles
+           aisle2 === mirrorAisle1 || // Direct mirror pair
+           Math.abs(aisle2 - mirrorAisle1) === 1; // Adjacent to mirror pair
+  }
+  
+  // Non-Block B aisles or aisle numbers outside range - use standard comparison
+  return Math.abs(aisle1 - aisle2) === 1;
+};
+
+// Function to sort aisles based on physical proximity using mirrored layout
+const sortAislesByPhysicalProximity = (aisles: number[]): number[] => {
+  if (aisles.length <= 1) return aisles;
+
+  // Clone the array to avoid mutating the input
+  const sortedAisles = [...aisles];
+  const result: number[] = [sortedAisles[0]]; // Start with the first aisle
+  sortedAisles.splice(0, 1);
+
+  // Build path by always picking the closest aisle to the last one
+  while (sortedAisles.length > 0) {
+    const lastAisle = result[result.length - 1];
+    
+    // Find the physically closest aisle to the current one
+    let closestIndex = 0;
+    let closestDistance = Infinity;
+    
+    for (let i = 0; i < sortedAisles.length; i++) {
+      // For Block B, we need to consider the mirrored layout
+      const currentAisle = sortedAisles[i];
+      
+      // Calculate physical proximity
+      let distance;
+      if (lastAisle >= 25 && lastAisle <= 81 && currentAisle >= 25 && currentAisle <= 81) {
+        // Handle Block B mirrored layout
+        const lastMirror = 106 - lastAisle;
+        distance = Math.min(
+          Math.abs(lastAisle - currentAisle), // Direct distance
+          Math.abs(lastMirror - currentAisle) // Distance via mirror pair
+        );
+      } else {
+        // Standard distance for non-Block B aisles
+        distance = Math.abs(lastAisle - currentAisle);
+      }
+      
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = i;
+      }
+    }
+    
+    // Add the closest aisle to our result and remove it from candidates
+    result.push(sortedAisles[closestIndex]);
+    sortedAisles.splice(closestIndex, 1);
+  }
+  
+  return result;
+};
 
 const ShoppingListContainer = () => {
   const { toast } = useToast();
@@ -82,62 +147,137 @@ const ShoppingListContainer = () => {
     return matches / longer.length;
   };
 
+  // Function to validate if a product exists in the database
+  const validateProduct = (productName: string, products: AisleProduct[]): { isValid: boolean; aisle: number | null } => {
+    if (!productName || typeof productName !== 'string' || productName.trim() === '') {
+      return { isValid: false, aisle: null };
+    }
+    
+    const normalizedProduct = normalize(productName);
+    
+    for (const product of products) {
+      if (!product.produtos || typeof product.produtos !== 'string') continue;
+      
+      const productItems = product.produtos
+        .split(/[,\s]+/)
+        .map(p => normalize(p))
+        .filter(p => p.length > 0);
+      
+      const hasMatch = productItems.some(prodItem => {
+        if (typeof prodItem !== 'string' || typeof normalizedProduct !== 'string') return false;
+        
+        const exactMatch = normalizedProduct === prodItem;
+        const partialMatch = (prodItem.length > 2 && normalizedProduct.includes(prodItem)) || 
+                            (normalizedProduct.length > 2 && prodItem.includes(normalizedProduct));
+        const similarityMatch = calculateSimilarity(normalizedProduct, prodItem) >= 0.7;
+        
+        return exactMatch || partialMatch || similarityMatch;
+      });
+      
+      if (hasMatch) {
+        return { isValid: true, aisle: product.corredor };
+      }
+    }
+    
+    return { isValid: false, aisle: null };
+  };
+
   const generateRoute = (itemsList: string[], products: AisleProduct[]) => {
     const matchedItems = new Map<number, string[]>();
     const notMatched: string[] = [];
 
+    // Process each item in the list
     itemsList.forEach(item => {
       if (typeof item !== 'string' || item.trim() === '') {
-        return; // Ignora itens inválidos
+        return; // Skip invalid items
       }
       
-      const cleanItem = normalize(item);
-      let matched = false;
-
-      for (const product of products) {
-        if (!product.produtos || typeof product.produtos !== 'string') continue;
-
-        // Processamento seguro dos produtos
-        const productItems = product.produtos
-          .split(/[,\s]+/)
-          .map(p => normalize(p))
-          .filter(p => p.length > 0);
-
-        // Verifica por correspondência exata ou parcial
-        const hasMatch = productItems.some(prodItem => {
-          if (typeof prodItem !== 'string' || typeof cleanItem !== 'string') return false;
-          
-          // Verifica se há correspondência exata ou parcial
-          const exactMatch = cleanItem === prodItem;
-          const partialMatch = (prodItem.length > 2 && cleanItem.includes(prodItem)) || 
-                              (cleanItem.length > 2 && prodItem.includes(cleanItem));
-          const similarityMatch = calculateSimilarity(cleanItem, prodItem) >= 0.7;
-          
-          return exactMatch || partialMatch || similarityMatch;
-        });
-
-        if (hasMatch) {
-          const corridor = product.corredor;
-          const currentItems = matchedItems.get(corridor) || [];
-          if (!currentItems.includes(item)) {
-            matchedItems.set(corridor, [...currentItems, item]);
-          }
-          matched = true;
-          break;
+      const validation = validateProduct(item, products);
+      
+      if (validation.isValid && validation.aisle !== null) {
+        const corridor = validation.aisle;
+        const currentItems = matchedItems.get(corridor) || [];
+        if (!currentItems.includes(item)) {
+          matchedItems.set(corridor, [...currentItems, item]);
         }
-      }
-
-      if (!matched && item.trim() !== '') {
-        notMatched.push(item);
+      } else {
+        // Only add to unmatched if it's not already there
+        if (!notMatched.includes(item)) {
+          notMatched.push(item);
+        }
       }
     });
 
-    const sortedRoute = Array.from(matchedItems.entries())
-      .map(([corredor, itens]) => ({ corredor, itens }))
-      .sort((a, b) => a.corredor - b.corredor);
+    // Get all aisles numbers and sort them by physical proximity
+    const aisleNumbers = Array.from(matchedItems.keys());
+    const sortedAisles = sortAislesByPhysicalProximity(aisleNumbers);
+    
+    // Create the final route using the sorted aisles
+    const sortedRoute = sortedAisles.map(aisle => ({
+      corredor: aisle,
+      itens: matchedItems.get(aisle) || []
+    }));
 
     setShoppingRoute(sortedRoute);
     setUnmatchedItems(notMatched);
+  };
+
+  // Handle adding multiple comma-separated items
+  const handleAddMultipleItems = (input: string) => {
+    if (typeof input !== 'string' || input.trim() === '') {
+      return;
+    }
+    
+    // Split by commas and clean up each item
+    const newItemsInput = input.split(',').map(item => item.trim()).filter(Boolean);
+    
+    if (newItemsInput.length === 0) {
+      return;
+    }
+    
+    const validItems: string[] = [];
+    const invalidItems: string[] = [];
+    
+    // Validate each item
+    newItemsInput.forEach(item => {
+      const validation = validateProduct(item, aisleProducts);
+      
+      if (validation.isValid) {
+        validItems.push(item);
+      } else {
+        invalidItems.push(item);
+      }
+    });
+    
+    // Update the items list with valid items
+    if (validItems.length > 0) {
+      const newItems = [...items, ...validItems];
+      setItems(newItems);
+      generateRoute(newItems, aisleProducts);
+      
+      if (validItems.length === 1) {
+        toast({
+          title: "Item adicionado",
+          description: `${validItems[0]} foi adicionado à sua lista`,
+          variant: "default"
+        });
+      } else {
+        toast({
+          title: "Itens adicionados",
+          description: `${validItems.length} itens foram adicionados à sua lista`,
+          variant: "default"
+        });
+      }
+    }
+    
+    // Notify about invalid items
+    if (invalidItems.length > 0) {
+      toast({
+        title: "Produtos não encontrados",
+        description: `Os seguintes itens não foram encontrados: ${invalidItems.join(', ')}`,
+        variant: "destructive"
+      });
+    }
   };
   
   return (
@@ -154,41 +294,42 @@ const ShoppingListContainer = () => {
         <div className="space-y-6">
           <ImageUpload 
             onProcessed={(extractedItems: string[]) => {
-              // Valida os itens antes de adicioná-los
-              const validItems = extractedItems.filter(item => 
-                typeof item === 'string' && item.trim() !== ''
-              );
+              // Process and add valid items only
+              const validItems: string[] = [];
               
-              // Verifica se há itens válidos
+              // Validate each extracted item
+              extractedItems.forEach(item => {
+                if (typeof item === 'string' && item.trim() !== '') {
+                  const validation = validateProduct(item, aisleProducts);
+                  if (validation.isValid) {
+                    validItems.push(item);
+                  }
+                }
+              });
+              
+              // If we have valid items, add them
               if (validItems.length > 0) {
                 const newItems = [...items, ...validItems];
                 setItems(newItems);
                 generateRoute(newItems, aisleProducts);
+                
+                toast({
+                  title: "Produtos identificados",
+                  description: `${validItems.length} produtos válidos foram adicionados`,
+                  variant: "default"
+                });
               } else {
-                toast({ 
-                  title: "Aviso", 
-                  description: "Nenhum item válido encontrado", 
-                  variant: "default" 
+                toast({
+                  title: "Nenhum produto encontrado",
+                  description: "Nenhum produto válido foi identificado no cupom",
+                  variant: "destructive"
                 });
               }
             }}
             isLoading={isLoading}
             setIsLoading={setIsLoading}
           />
-          <ManualItemEntry onAddItem={(item: string) => {
-            // Validação do item antes de adicionar
-            if (typeof item === 'string' && item.trim() !== '') {
-              const newItems = [...items, item];
-              setItems(newItems);
-              generateRoute(newItems, aisleProducts);
-            } else {
-              toast({ 
-                title: "Aviso", 
-                description: "Item inválido", 
-                variant: "default" 
-              });
-            }
-          }} />
+          <ManualItemEntry onAddItem={handleAddMultipleItems} />
           <ShoppingRouteTable 
             route={shoppingRoute} 
             rawItems={unmatchedItems} 
@@ -204,11 +345,28 @@ const ShoppingListContainer = () => {
               generateRoute(newItems, aisleProducts);
             }}
             onEditItem={(oldItem: string, newItem: string) => {
-              // Substitui o item antigo pelo novo
-              const newItems = items.map(i => i === oldItem ? newItem : i);
-              setItems(newItems);
-              // Regenera a rota com os novos itens
-              generateRoute(newItems, aisleProducts);
+              // Validate the new item first
+              const validation = validateProduct(newItem, aisleProducts);
+              
+              if (validation.isValid) {
+                // Substitui o item antigo pelo novo
+                const newItems = items.map(i => i === oldItem ? newItem : i);
+                setItems(newItems);
+                // Regenera a rota com os novos itens
+                generateRoute(newItems, aisleProducts);
+                
+                toast({
+                  title: "Item atualizado",
+                  description: `Item atualizado para "${newItem}"`,
+                  variant: "default"
+                });
+              } else {
+                toast({
+                  title: "Produto não encontrado",
+                  description: `"${newItem}" não foi encontrado nos produtos cadastrados`,
+                  variant: "destructive"
+                });
+              }
             }}
           />
           <ShoppingActionButtons
@@ -231,9 +389,11 @@ const ShoppingListContainer = () => {
                 ));
                 
                 toast({ title: "Sucesso", description: "Lista salva!", variant: "default" });
-                setItems([]);
-                setShoppingRoute([]);
-                setUnmatchedItems([]);
+                
+                // Don't clear the list after saving - keep it displayed
+                // setItems([]);
+                // setShoppingRoute([]);
+                // setUnmatchedItems([]);
               } catch (error) {
                 toast({ title: "Erro", description: "Falha ao salvar", variant: "destructive" });
               } finally {
