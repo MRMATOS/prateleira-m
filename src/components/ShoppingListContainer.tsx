@@ -51,51 +51,61 @@ const ShoppingListContainer = () => {
 
   useEffect(() => { fetchAisleProducts(); }, [selectedStore]);
 
-  // CORREÇÃO DEFINITIVA: Verificação reforçada
-  const generateRoute = (itemsList: string[], products: AisleProduct[]) => {
-    const matchedItems = new Map<number, string[]>();
-    const notMatched: string[] = [];
+// src/components/ShoppingListContainer.tsx
+const generateRoute = (itemsList: string[], products: AisleProduct[]) => {
+  const matchedItems = new Map<number, string[]>();
+  const notMatched: string[] = [];
 
-    itemsList.forEach(item => {
-      let matched = false;
-      const cleanItem = String(item).toLowerCase().trim(); // Conversão segura
-
-      for (const product of products) {
-        if (!product.produtos) continue;
-
-        const productItems = product.produtos
-          .toLowerCase()
-          .split(/[,\s]+/)
-          .filter(Boolean)
-          .map(pi => String(pi).trim()); // Garante string
-
-        const hasMatch = productItems.some(prodItem => {
-          const cleanProdItem = String(prodItem).toLowerCase().trim(); // Conversão segura
-          return cleanProdItem.includes(cleanItem) || cleanItem.includes(cleanProdItem);
-        });
-
-        if (hasMatch) {
-          const corridor = product.corredor;
-          const currentItems = matchedItems.get(corridor) || [];
-          if (!currentItems.includes(item)) {
-            matchedItems.set(corridor, [...currentItems, item]);
-          }
-          matched = true;
-          break;
-        }
-      }
-      
-      if (!matched) notMatched.push(item);
-    });
-
-    const sortedRoute = Array.from(matchedItems.entries())
-      .map(([corredor, itens]) => ({ corredor, itens }))
-      .sort((a, b) => a.corredor - b.corredor);
-
-    setShoppingRoute(sortedRoute);
-    setUnmatchedItems(notMatched);
+  // Função de normalização reforçada
+  const normalize = (text: string) => {
+    return String(text) // Garante conversão para string
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // Remove acentos
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '') // Mantém apenas letras e números
+      .trim();
   };
 
+  itemsList.forEach(item => {
+    const cleanItem = normalize(item);
+    let matched = false;
+
+    for (const product of products) {
+      if (!product.produtos) continue;
+
+      // Processamento seguro dos produtos
+      const productItems = product.produtos
+        .split(/[,\s]+/)
+        .map(p => normalize(p))
+        .filter(p => p.length > 0);
+
+      // Comparação invulnerável
+      const hasMatch = productItems.some(prodItem => {
+        return cleanItem === prodItem || 
+               prodItem.includes(cleanItem) || 
+               cleanItem.includes(prodItem);
+      });
+
+      if (hasMatch) {
+        const corridor = product.corredor;
+        const currentItems = matchedItems.get(corridor) || [];
+        if (!currentItems.includes(item)) {
+          matchedItems.set(corridor, [...currentItems, item]);
+        }
+        matched = true;
+        break;
+      }
+    }
+
+    if (!matched) notMatched.push(item);
+  });
+
+  const sortedRoute = Array.from(matchedItems.entries())
+    .map(([corredor, itens]) => ({ corredor, itens }))
+    .sort((a, b) => a.corredor - b.corredor);
+
+  setShoppingRoute(sortedRoute);
+  setUnmatchedItems(notMatched);
+};
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-3xl px-4 py-6">
