@@ -51,31 +51,35 @@ const ShoppingListContainer = () => {
 
   useEffect(() => { fetchAisleProducts(); }, [selectedStore]);
 
-  // CORREÇÃO CHAVE: Função de geração de rota segura
+  // CORREÇÃO DEFINITIVA: Verificação reforçada
   const generateRoute = (itemsList: string[], products: AisleProduct[]) => {
     const matchedItems = new Map<number, string[]>();
     const notMatched: string[] = [];
 
     itemsList.forEach(item => {
       let matched = false;
-      
+      const cleanItem = String(item).toLowerCase().trim(); // Conversão segura
+
       for (const product of products) {
         if (!product.produtos) continue;
-        
+
         const productItems = product.produtos
           .toLowerCase()
           .split(/[,\s]+/)
-          .filter(Boolean);
+          .filter(Boolean)
+          .map(pi => String(pi).trim()); // Garante string
 
         const hasMatch = productItems.some(prodItem => {
-          // Verificação de tipo explícita
-          if (typeof prodItem !== 'string' || typeof item !== 'string') return false;
-          return prodItem.includes(item) || item.includes(prodItem);
+          const cleanProdItem = String(prodItem).toLowerCase().trim(); // Conversão segura
+          return cleanProdItem.includes(cleanItem) || cleanItem.includes(cleanProdItem);
         });
 
         if (hasMatch) {
           const corridor = product.corredor;
-          matchedItems.set(corridor, [...(matchedItems.get(corridor) || []), item].filter((v, i, a) => a.indexOf(v) === i));
+          const currentItems = matchedItems.get(corridor) || [];
+          if (!currentItems.includes(item)) {
+            matchedItems.set(corridor, [...currentItems, item]);
+          }
           matched = true;
           break;
         }
@@ -92,8 +96,6 @@ const ShoppingListContainer = () => {
     setUnmatchedItems(notMatched);
   };
 
-  // ... (mantido o restante do código original sem alterações)
-
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="mx-auto max-w-3xl px-4 py-6">
@@ -108,7 +110,7 @@ const ShoppingListContainer = () => {
         <div className="space-y-6">
           <ImageUpload 
             onProcessed={(extractedItems: string[]) => {
-              const newItems = [...items, ...extractedItems];
+              const newItems = [...items, ...extractedItems.filter(i => typeof i === 'string')]; // Filtro extra
               setItems(newItems);
               generateRoute(newItems, aisleProducts);
             }}
@@ -116,9 +118,11 @@ const ShoppingListContainer = () => {
             setIsLoading={setIsLoading}
           />
           <ManualItemEntry onAddItem={(item: string) => {
-            const newItems = [...items, item];
-            setItems(newItems);
-            generateRoute(newItems, aisleProducts);
+            if (typeof item === 'string') { // Validação adicional
+              const newItems = [...items, item];
+              setItems(newItems);
+              generateRoute(newItems, aisleProducts);
+            }
           }} />
           <ShoppingRouteTable 
             route={shoppingRoute} 
@@ -135,10 +139,15 @@ const ShoppingListContainer = () => {
 
               setIsSaving(true);
               try {
-                const allItems = shoppingRoute.flatMap(r => r.itens).concat(unmatchedItems);
+                const allItems = [
+                  ...shoppingRoute.flatMap(r => r.itens),
+                  ...unmatchedItems
+                ].filter(i => typeof i === 'string'); // Filtro final
+
                 await Promise.all(allItems.map(item => 
                   supabase.from('list').insert({ item, origem: selectedStore, quantidade: 1 })
                 ));
+                
                 toast({ title: "Sucesso", description: "Lista salva!", variant: "default" });
                 setItems([]);
                 setShoppingRoute([]);
